@@ -20,18 +20,16 @@ This guide describes configuration only. No external service has been changed an
 | `CORS_ALLOWED_ORIGINS` | Yes | Comma-separated exact frontend origins, including scheme, with no trailing slash. |
 | `RESUME_STORAGE_PATH` | Yes | Writable upload directory; local files are not persistent on Render Free. |
 | `JPA_DDL_AUTO` | No | Defaults to `validate`; do not set production to `update` or `create`. |
-| `SPRING_MAIL_HOST` | `prod` only | Provider SMTP submission host. Use the host supplied by your transactional email provider. |
-| `SPRING_MAIL_PORT` | `prod` only | SMTP submission port; defaults to `587`. SMTP AUTH and STARTTLS are enforced. |
-| `SPRING_MAIL_USERNAME` | `prod` only | Provider-issued SMTP username. |
-| `SPRING_MAIL_PASSWORD` | `prod` only | Provider-issued SMTP credential; store as a secret. |
-| `MAIL_FROM_ADDRESS` | `prod` only | Sender address authorized by the provider. |
+| `MAILJET_API_KEY` | `prod` only | Mailjet API key; store as a secret. |
+| `MAILJET_API_SECRET` | `prod` only | Mailjet API secret; store as a secret. |
+| `MAIL_FROM_ADDRESS` | `prod` only | Sender address authorized in Mailjet. |
 | `MAIL_FROM_NAME` | `prod` only | Display name for the sender. |
 | `FRONTEND_VERIFICATION_URL` | `prod` only | HTTPS URL for the existing `/verify-email` page; the adapter appends the token query parameter. |
 | `FRONTEND_PASSWORD_RESET_URL` | `prod` only | HTTPS URL for the existing `/reset-password` page; the adapter appends the token query parameter. |
 
-Create an authenticated SMTP submission account with a transactional provider and use its SMTP host, port, username, and generated password. Verify a domain the project owner controls and authorize the sender address there; configure SPF/DKIM (and DMARC according to provider instructions). Do not use a personal mailbox or invented/default credentials. Set `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `FRONTEND_VERIFICATION_URL=https://<your-netlify-domain>/verify-email`, and `FRONTEND_PASSWORD_RESET_URL=https://<your-netlify-domain>/reset-password` to owner-supplied values. The SMTP adapter enforces authentication and STARTTLS, applies bounded connection/read/write timeouts, and uses the existing frontend routes. No provider account or credentials have been created for this project.
+Create Mailjet API credentials and authorize the sender address in Mailjet. Set `MAILJET_API_KEY` and `MAILJET_API_SECRET` as Render secrets; do not put them in source control or expose them in logs. Set `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `FRONTEND_VERIFICATION_URL=https://<your-netlify-domain>/verify-email`, and `FRONTEND_PASSWORD_RESET_URL=https://<your-netlify-domain>/reset-password` to the chosen sender and frontend values. The application sends JSON to Mailjet's fixed HTTPS transactional-send endpoint using HTTP Basic Authentication, with redirects disabled and bounded connection/request timeouts. Verify sender/domain status and account sending limits in Mailjet before relying on delivery.
 
-Verification/reset tokens are generated from 256 bits of secure randomness, SHA-256 hashed in storage, expire, and are consumed under a database lock. Raw values are included only in their email link. Delivery errors roll back the token-issuing transaction where applicable and return a generic 503 without logging provider details or returning a token. Production startup fails fast when any required SMTP, sender, or HTTPS frontend URL setting is absent.
+Verification/reset tokens are generated from 256 bits of secure randomness, SHA-256 hashed in storage, expire, and are consumed under a database lock. Raw values are included only in their email link. Delivery errors roll back the token-issuing transaction where applicable and return a generic 503 without logging provider details or returning a token. Non-success HTTP responses, rejected Mailjet message statuses, and transport failures are treated as delivery failures. Production startup fails fast when either Mailjet credential, sender setting, or HTTPS frontend URL setting is absent.
 
 ### Frontend
 
@@ -141,8 +139,8 @@ The Dockerfile pins Java 21 runtime/build images and runs the service as a non-r
 
 - A disposable MySQL 8.0.41 instance was created with a temporary data directory, fresh schemas, and newly generated test credentials. The Phase 8 suite passed fresh V1–V5 migration, schema validation, synthetic V2-to-V5 upgrade, auth/workflow persistence, unique/FK constraints, and concurrent duplicate registration/offer tests. The instance and credentials were discarded. Docker's daemon is unavailable.
 - Git migration history and any persistent database status are unknown. The synthetic V2 schema was generated from current scripts; it cannot establish compatibility with any previously deployed V1/V2 checksum. The original deployed schema/history must be reviewed safely before a production upgrade.
-- SMTP delivery is implemented but has only been verified with a mock sender; the project owner must provision a provider account, secrets, and sender-domain authorization before use.
+- Mailjet HTTPS delivery is implemented but has only been verified with mock HTTP responses; the project owner must provision API credentials and authorize the sender before use.
 - `AuthContext` persists bearer and refresh tokens in `localStorage`; this exposes tokens to successful same-origin script injection. An HttpOnly-cookie design requires deliberate CSRF/CORS changes and has not been implemented.
 - Render/Netlify/TiDB Cloud commands, TLS truststore handling, resume storage, and health check have not been exercised on those services.
-- The `prod` Spring profile intentionally fails startup until SMTP, sender, and HTTPS frontend URL configuration is supplied.
+- The `prod` Spring profile intentionally fails startup until Mailjet credentials, sender, and HTTPS frontend URL configuration is supplied.
 - Local non-`prod` startup has no default email sender. Requests for an existing account fail explicitly with a generic 503 unless an email sink is supplied (the isolated E2E profile supplies a synthetic test mailbox).

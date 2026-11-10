@@ -4,10 +4,10 @@
 
 ### Phase 7: Production email integration
 
-- Added a provider-neutral SMTP adapter for verification and password-reset messages. Production configuration requires `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `FRONTEND_VERIFICATION_URL`, and `FRONTEND_PASSWORD_RESET_URL`; SMTP AUTH, STARTTLS, and bounded timeouts are enforced.
+- Replaced the SMTP adapter with a Mailjet HTTPS API adapter for verification and password-reset messages. Production configuration requires `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `FRONTEND_VERIFICATION_URL`, and `FRONTEND_PASSWORD_RESET_URL`; HTTP Basic Authentication, fixed HTTPS endpoint, disabled redirects, and bounded connection/request timeouts are configured.
 - Email links use the existing `/verify-email` and `/reset-password` frontend flows. Tokens remain random, hashed in storage, expiring, single-use, and absent from API responses/logs. Delivery errors return a generic 503 and do not falsely signal delivery.
-- Focused SMTP/auth suite: **13 passed, 0 failed, 0 errors, 0 skipped**, including success/failure, verification, expired/reused tokens, password reset, and session revocation.
-- **Implementation complete; provider account, authorized sender domain, secrets, and live-delivery check require owner setup.** No real email was sent.
+- Focused Mailjet adapter suite: **4 passed, 0 failed, 0 errors, 0 skipped**, covering verification/reset payloads, Basic Authentication, HTTP rejection, unsuccessful message status, transport failure, and sanitized exceptions. No real email was sent.
+- **Implementation complete; Mailjet account, authorized sender, secrets, and live-delivery check require owner setup.**
 
 ### Phase 8: Real MySQL validation
 
@@ -18,7 +18,7 @@
 
 ### Required verification (executed)
 
-- Overall status: **Phase 7 partially complete** (live SMTP delivery awaits provider setup) and **Phase 8 partially complete** (isolated MySQL tests passed; historical/deployed migration history remains unknown).
+- Overall status: **Phase 7 partially complete** (live Mailjet delivery awaits provider setup) and **Phase 8 partially complete** (isolated MySQL tests passed; historical/deployed migration history remains unknown).
 - `.\mvnw.cmd clean test`: **48 run, 0 failures, 0 errors, 5 skipped** (the MySQL-only tests are opt-in and were run separately).
 - `.\mvnw.cmd verify`: **48 run, 0 failures, 0 errors, 5 skipped; BUILD SUCCESS**.
 - `frontend\npm.cmd run build`: **passed**, 111 modules transformed.

@@ -18,7 +18,7 @@ CareerConnect is a role-based job portal and campus placement tracker with a Spr
 
 The application requires a configured database and secret; it intentionally has no default database password or JWT signing key. New accounts must verify their email before login or protected API access. Flyway owns schema changes and Hibernate validates mappings by default.
 
-Verification and password-reset links are sent by a provider-neutral SMTP adapter in the `prod` profile. Configure provider-issued SMTP credentials, sender identity, and HTTPS frontend URLs as documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); production startup fails fast if any required setting is missing. Mail errors return a generic service-unavailable response and do not expose provider details or tokens. The `e2e` profile uses only its isolated synthetic mailbox.
+Verification and password-reset links are sent through Mailjet's HTTPS API by the `prod` profile. Configure Mailjet API credentials, sender identity, and HTTPS frontend URLs as documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); production startup fails fast if any required setting is missing. Mail errors return a generic service-unavailable response and do not expose provider details or tokens. The `e2e` profile uses only its isolated synthetic mailbox.
 
 ## Verification commands
 
@@ -43,4 +43,4 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the Render, Netlify, and Aiven 
 
 ## Current readiness
 
-Current Flyway files V1–V4 were modified during earlier development and the workspace has no Git history, so the exact original checksums and any previously applied database history remain unknown. Phase 8 verified fresh V1–V5 migration and a synthetic V2-to-V5 upgrade on disposable MySQL 8.0.41, but that cannot establish compatibility with an unknown deployed history. No database outside that disposable instance was accessed. Production SMTP credentials/domain setup, shared rate limiting, and browser-local token storage remain operational/security considerations; no deployment was performed. **Production readiness is not established.** See [PROJECT_AUDIT.md](PROJECT_AUDIT.md) for evidence and owner actions.
+Current Flyway files V1–V4 were modified during earlier development and the workspace has no Git history, so the exact original checksums and any previously applied database history remain unknown. Phase 8 verified fresh V1–V5 migration and a synthetic V2-to-V5 upgrade on disposable MySQL 8.0.41, but that cannot establish compatibility with an unknown deployed history. No database outside that disposable instance was accessed. Mailjet sender/API setup, shared rate limiting, and browser-local token storage remain operational/security considerations; no deployment was performed. **Production readiness is not established.** See [PROJECT_AUDIT.md](PROJECT_AUDIT.md) for evidence and owner actions.

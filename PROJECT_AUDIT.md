@@ -22,7 +22,7 @@
 
 ### Remaining security limitations
 
-- SMTP delivery is implemented and covered with a mock sender, but no external provider credentials/domain were available for a live delivery test. Production activation requires owner-supplied provider configuration.
+- Mailjet HTTPS delivery is implemented and covered with mocked HTTP responses, but no external provider credentials or sender authorization were available for a live delivery test. Production activation requires owner-supplied provider configuration.
 - Verification/reset throttling is in-process; login/registration do not have distributed rate limits. Configure a shared limiter or edge/WAF before a multi-instance deployment.
 - Access and refresh tokens remain in browser `localStorage`; successful same-origin script injection can steal them. Consider an HttpOnly-cookie design before production (with explicit CSRF/CORS changes).
 - Resume validation checks MIME type, size, and PDF signature, not full PDF parsing/AV scanning. Persistent disk permissions have not been tested on Render.
@@ -48,10 +48,10 @@
 
 ## Phase 7 — production email integration
 
-- Added a provider-neutral Spring Mail SMTP adapter for verification and password-reset links. Production settings are environment-backed: `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `FRONTEND_VERIFICATION_URL`, and `FRONTEND_PASSWORD_RESET_URL`. Production startup validates required settings and HTTPS frontend URLs; SMTP AUTH, STARTTLS, and bounded timeouts are configured.
-- The project owner must provision a transactional SMTP provider account, verify a controlled sender domain, and supply provider-issued credentials and sender values. No provider account, personal mailbox, or credential was invented or configured. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- Replaced SMTP with a Mailjet HTTPS API adapter for verification and password-reset links. Production settings are environment-backed: `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `FRONTEND_VERIFICATION_URL`, and `FRONTEND_PASSWORD_RESET_URL`. Production startup validates required settings and HTTPS frontend URLs; HTTP Basic Authentication, fixed HTTPS endpoint, disabled redirects, and bounded timeouts are configured.
+- The project owner must provision Mailjet API credentials and authorize the sender address. No provider account or credential was invented or configured. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - Tokens use the existing secure random generation, hashed persistence, expiry, single-use/row-lock handling, and are not returned by the API or logged. Delivery failure does not produce a success-shaped response; the caller receives a generic 503, and token issuance rolls back in its transaction.
-- Mock-sender coverage includes successful verification/reset delivery, delivery failure, token persistence hashing, verification, expired/reused tokens, password reset, and refresh-session revocation. Focused SMTP/authentication suite: **13 passed, 0 failed, 0 errors, 0 skipped**. No live provider delivery was attempted.
+- Existing auth workflow coverage includes token persistence hashing, verification, expired/reused tokens, password reset, and refresh-session revocation. The Mailjet adapter test suite now covers successful verification/reset payloads, Basic Authentication, HTTP rejection, unsuccessful message status, transport failure, and sanitized exceptions (**4 passed** in this change). No live provider delivery was attempted.
 - Status: **implementation complete; production activation/live-provider verification pending owner configuration**.
 
 ## Phase 8 — disposable real-MySQL validation

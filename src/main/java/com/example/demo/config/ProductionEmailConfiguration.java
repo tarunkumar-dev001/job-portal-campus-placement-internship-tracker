@@ -11,34 +11,32 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
 import com.example.demo.service.AuthTokenSink;
-import com.example.demo.service.SmtpAuthTokenSink;
+import com.example.demo.service.MailjetAuthTokenSink;
 
 @Configuration
 @Profile("prod")
 public class ProductionEmailConfiguration {
 
     @Bean
-    AuthTokenSink smtpAuthTokenSink(
-            @Value("${spring.mail.host:}") String host,
-            @Value("${spring.mail.port:587}") int port,
-            @Value("${spring.mail.username:}") String username,
-            @Value("${spring.mail.password:}") String password,
+    AuthTokenSink mailjetAuthTokenSink(
+            @Value("${app.mailjet.api-key:}") String apiKey,
+            @Value("${app.mailjet.api-secret:}") String apiSecret,
             @Value("${app.mail.sender.address:}") String senderAddress,
             @Value("${app.mail.sender.name:}") String senderName,
             @Value("${app.mail.frontend.verification-url:}") String verificationUrl,
             @Value("${app.mail.frontend.reset-url:}") String resetUrl) {
-        requireConfigured(host, port, username, password, senderAddress, senderName, verificationUrl, resetUrl);
-        return new SmtpAuthTokenSink(host, port, username, password, senderAddress, senderName,
+        requireConfigured(apiKey, apiSecret, senderAddress, senderName, verificationUrl, resetUrl);
+        return new MailjetAuthTokenSink(apiKey, apiSecret, senderAddress, senderName,
                 verificationUrl, resetUrl);
     }
 
-    private void requireConfigured(String host, int port, String username, String password, String senderAddress,
+    private void requireConfigured(String apiKey, String apiSecret, String senderAddress,
             String senderName, String verificationUrl, String resetUrl) {
-        if (host.isBlank() || port < 1 || port > 65535 || username.isBlank() || password.isBlank()
+        if (apiKey.isBlank() || apiSecret.isBlank()
                 || !isValidSender(senderAddress, senderName)
                 || !isSecureFrontendUrl(verificationUrl) || !isSecureFrontendUrl(resetUrl)) {
             throw new IllegalStateException(
-                    "Production email requires SMTP host, port, username, password, sender address/name, "
+                    "Production email requires Mailjet API credentials, sender address/name, "
                             + "and HTTPS verification/reset URLs.");
         }
     }
