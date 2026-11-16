@@ -8,7 +8,7 @@ This guide describes configuration only. No external service has been changed an
 
 | Variable | Required | Purpose |
 |---|---:|---|
-| `SPRING_PROFILES_ACTIVE` | production | Set to `prod` to enable strict MySQL TLS truststore settings. |
+| `SPRING_PROFILES_ACTIVE` | Yes | Must be exactly `prod`; the Docker entrypoint fails before Java starts if it is missing or different. |
 | `PORT` | No | HTTP listener; defaults to `8080`, uses the platform-provided port when set. |
 | `DB_URL` | Yes | TiDB Cloud MySQL JDBC URL, e.g. `jdbc:mysql://<TIDB_HOST>:4000/<DATABASE>?sslMode=VERIFY_IDENTITY&serverTimezone=UTC`. |
 | `DB_USERNAME` | Yes | Dedicated least-privilege application database account. |
@@ -41,7 +41,7 @@ Vite embeds this value at build time. Configure it before the Netlify build; cha
 
 ## Safe prerequisites
 
-1. Obtain the actual Flyway history and schema for any existing database. Compare every applied version, script name, checksum, and success state with the exact source release. Do not infer this from the current workspace: it has no `.git` metadata.
+1. Obtain the actual Flyway history and schema for any existing database. Compare every applied version, script name, checksum, and success state with the exact source release. Do not infer deployed state from the current worktree alone.
 2. In an authorized read-only session, inspect history:
 
    ```sql
@@ -109,6 +109,86 @@ The health endpoint runs `SELECT 1`; it returns success only when the database i
 
 The Dockerfile pins Java 21 runtime/build images and runs the service as a non-root user. Render image build, secret-file readability, and database TLS must be tested before deployment.
 
+## V6 production migration readiness gate
+
+This is an operator procedure, not authorization to migrate. Do not start or restart the Render application during preflight: Flyway is enabled in the base configuration as well as `prod`, and startup may apply pending migrations. The entrypoint requires `SPRING_PROFILES_ACTIVE=prod` before Java can start.
+
+### Required configuration names
+
+Configure these names in the Render backend environment without copying their values into tickets, chat, source control, or logs:
+
+- `SPRING_PROFILES_ACTIVE` (must be exactly `prod`)
+- `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`
+- `DB_SSL_TRUSTSTORE_PASSWORD`
+- `JWT_SECRET`, `CORS_ALLOWED_ORIGINS`, `RESUME_STORAGE_PATH`
+- `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`
+- `FRONTEND_VERIFICATION_URL`, `FRONTEND_PASSWORD_RESET_URL`
+
+`DB_SSL_TRUSTSTORE_PATH` must remain `/tmp/tidb-cloud-truststore.p12`; the Docker image supplies this value. Render must also provide the existing secret file `tidb-cloud-truststore.p12.b64` (this is a secret file, not an environment-variable name). `PORT`, `JWT_EXPIRATION_MS`, and `JPA_DDL_AUTO` are optional; retain schema validation and do not configure schema creation or update. Do not substitute compatibility-test credentials or endpoints.
+
+### Read-only production identity and history checks
+
+1. In TiDB Cloud Console, independently verify the production instance name/ID, region, branch, and database against the approved production inventory. The test and production instances may share a gateway hostname; hostname, resolved IP, and TLS hostname verification do not by themselves identify the cluster. Confirm the production-specific account and endpoint from the console. Do not use the application startup or a Flyway migration command for this check.
+2. Use an authorized read-only database account and a TLS-verified SQL client configured for the confirmed production endpoint. Run only these `SELECT` statements; do not use application credentials if they have write privileges:
+
+   ```sql
+   SELECT VERSION() AS server_version, DATABASE() AS selected_database;
+
+   SELECT COUNT(*) AS history_table_count
+   FROM information_schema.tables
+   WHERE table_schema = DATABASE()
+     AND table_name = 'flyway_schema_history';
+   ```
+
+3. Only if the history-table count is one, inspect its records:
+
+   ```sql
+   SELECT installed_rank, version, description, type, script, checksum, success
+   FROM flyway_schema_history
+   ORDER BY installed_rank;
+   ```
+
+   Confirm V1 through V5 are each present and successful, their script names and checksums match the exact release that was applied, and V6 is absent. Compare checksums with a trusted Flyway report or release artifact for that exact source revision. If the table is absent, any version is failed/missing, checksums differ, or the release baseline cannot be established, stop; do not baseline, repair, or start the application.
+4. Verify the expected pre-V6 schema and estimate the planned reauthentication impact using read-only queries:
+
+   ```sql
+   SELECT column_name, column_type, is_nullable
+   FROM information_schema.columns
+   WHERE table_schema = DATABASE()
+     AND table_name = 'refresh_tokens'
+   ORDER BY ordinal_position;
+
+   SELECT index_name, column_name, non_unique
+   FROM information_schema.statistics
+   WHERE table_schema = DATABASE()
+     AND table_name = 'refresh_tokens'
+   ORDER BY index_name, seq_in_index;
+
+   SELECT COUNT(*) AS currently_unrevoked_refresh_tokens
+   FROM refresh_tokens
+   WHERE revoked_at IS NULL;
+   ```
+
+   Confirm the table and columns match the V5 release and that no undocumented schema drift exists. Before V6, the unrevoked-row count is an estimate of rows the migration will revoke because the newly added `session_id` will be null for existing rows. Record the count and expected impact without exporting account or token data.
+5. Save the verified instance/database identity, history/checksum comparison, schema findings, and row-count estimate in the approved change record. If read-only access cannot establish all of these, the deployment gate remains blocked.
+
+### V6 change, backup, monitoring, and recovery
+
+- Take a verified, restorable backup immediately before the maintenance window. Restore it to an isolated disposable database and rehearse the V1–V5-to-V6 upgrade there; validate the backup and recovery procedure before production approval.
+- V6 adds nullable `refresh_tokens.session_id VARCHAR(36)`, sets `revoked_at` on every existing row whose session ID and revocation timestamp are null, then creates `idx_refresh_tokens_session_id`. It does not delete refresh-token rows. Existing unrevoked refresh sessions are intentionally invalidated, so affected users must sign in again. Stop/drain old application instances before migration so they cannot create legacy sessionless tokens during rollout.
+- During the approved rollout, allow one controlled new application startup to apply V6; keep traffic gated until Flyway reports V6 success and Hibernate schema validation succeeds. Verify the V6 history row, column definition/nullability, index, application health, and that no unrevoked row remains with a null session ID. Check startup/Flyway logs for errors without exposing secrets or personal data.
+- TiDB DDL commits independently and cannot be rolled back as one transaction. If startup fails during V6, stop the rollout and prevent automatic restart/retry. Preserve logs and the backup; use read-only inspection to determine whether the column, data update, index, and Flyway history entry were applied. Do not run `flyway repair`, rerun the migration, or restore a backup until the partial state and coordinated application/data recovery plan have been reviewed by the database owner. Any recovery must account for refresh tokens that may become active again if old data is restored.
+
+### Required confirmations before deployment
+
+- The correct production TiDB instance, database, production-specific account, endpoint, and TLS verification have been independently confirmed.
+- Render has the required variable names above, `SPRING_PROFILES_ACTIVE` is exactly `prod`, the Dockerfile entrypoint is not overridden, and the truststore secret file is available. Do not expose or paste secret values as evidence.
+- Production Flyway history is a verified successful V1–V5 baseline with matching checksums; V6 is not already applied; the schema matches V5.
+- The backup restore and isolated upgrade rehearsal passed; expected reauthentication impact and migration duration have been reviewed.
+- The migration window, traffic/instance sequencing, monitoring owner, and partial-failure recovery decision are approved.
+
+Do not proceed if any confirmation is missing. This runbook and the disposable TiDB v8.5.3 test results do not prove production database state or authorize a production migration.
+
 ## Netlify frontend
 
 - Base directory: `frontend`
@@ -138,7 +218,7 @@ The Dockerfile pins Java 21 runtime/build images and runs the service as a non-r
 ## Not yet production-ready
 
 - A disposable MySQL 8.0.41 instance was created with a temporary data directory, fresh schemas, and newly generated test credentials. The Phase 8 suite passed fresh V1–V5 migration, schema validation, synthetic V2-to-V5 upgrade, auth/workflow persistence, unique/FK constraints, and concurrent duplicate registration/offer tests. The instance and credentials were discarded. Docker's daemon is unavailable.
-- Git migration history and any persistent database status are unknown. The synthetic V2 schema was generated from current scripts; it cannot establish compatibility with any previously deployed V1/V2 checksum. The original deployed schema/history must be reviewed safely before a production upgrade.
+- The original deployed database history/schema and any persistent database status are unknown. Synthetic upgrade schemas cannot establish compatibility with a previously deployed checksum; the actual production history must be reviewed safely before an upgrade.
 - Mailjet HTTPS delivery is implemented but has only been verified with mock HTTP responses; the project owner must provision API credentials and authorize the sender before use.
 - `AuthContext` persists bearer and refresh tokens in `localStorage`; this exposes tokens to successful same-origin script injection. An HttpOnly-cookie design requires deliberate CSRF/CORS changes and has not been implemented.
 - Render/Netlify/TiDB Cloud commands, TLS truststore handling, resume storage, and health check have not been exercised on those services.

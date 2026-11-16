@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if [ "${SPRING_PROFILES_ACTIVE:-}" != "prod" ]; then
+    echo "SPRING_PROFILES_ACTIVE must be prod for the Render container" >&2
+    exit 1
+fi
+
 encoded_file=/etc/secrets/tidb-cloud-truststore.p12.b64
 truststore=/tmp/tidb-cloud-truststore.p12
 
