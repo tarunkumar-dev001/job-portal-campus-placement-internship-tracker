@@ -1,6 +1,7 @@
 package com.example.demo.security;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.example.demo.entity.User;
+import com.example.demo.repository.RefreshTokenRepository;
 import com.example.demo.repository.UserRepository;
 
 import jakarta.servlet.FilterChain;
@@ -24,12 +26,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtils jwtUtils;
     private final UserRepository userRepository;
+    private final RefreshTokenRepository refreshTokens;
     private final boolean requireEmailVerification;
 
     public JwtAuthenticationFilter(JwtUtils jwtUtils, UserRepository userRepository,
+            RefreshTokenRepository refreshTokens,
             @Value("${app.security.require-email-verification:true}") boolean requireEmailVerification) {
         this.jwtUtils = jwtUtils;
         this.userRepository = userRepository;
+        this.refreshTokens = refreshTokens;
         this.requireEmailVerification = requireEmailVerification;
     }
 
@@ -42,7 +47,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = authorization.substring(7);
             if (jwtUtils.validateToken(token)) {
                 String email = jwtUtils.extractEmail(token);
-                userRepository.findByEmail(email).ifPresent(user -> authenticate(user, request));
+                String sessionId = jwtUtils.extractSessionId(token);
+                if (sessionId != null
+                        && refreshTokens.existsBySessionIdAndRevokedAtIsNullAndExpiresAtAfter(sessionId, Instant.now())) {
+                    userRepository.findByEmail(email).ifPresent(user -> authenticate(user, request));
+                }
             }
         }
 

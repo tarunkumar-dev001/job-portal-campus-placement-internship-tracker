@@ -17,6 +17,8 @@ public class RefreshToken {
     private String tokenHash;
     @Column(nullable = false)
     private Instant expiresAt;
+    @Column(name = "session_id", length = 36)
+    private String sessionId;
     private Instant revokedAt;
     private String replacedByHash;
 }

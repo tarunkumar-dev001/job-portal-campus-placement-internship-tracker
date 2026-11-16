@@ -26,11 +26,12 @@ public class JwtUtils {
         this.expirationMs = expirationMs;
     }
 
-    public String generateToken(String email, String role) {
+    public String generateToken(String email, String role, String sessionId) {
         Date now = new Date();
         return Jwts.builder()
                 .subject(email)
                 .claim("role", role)
+                .claim("sid", sessionId)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + expirationMs))
                 .signWith(signingKey)
@@ -39,6 +40,10 @@ public class JwtUtils {
 
     public String extractEmail(String token) {
         return parseClaims(token).getSubject();
+    }
+
+    public String extractSessionId(String token) {
+        return parseClaims(token).get("sid", String.class);
     }
 
     public boolean validateToken(String token) {

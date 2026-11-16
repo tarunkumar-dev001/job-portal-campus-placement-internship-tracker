@@ -1,5 +1,6 @@
 package com.example.demo.config;
 
+import jakarta.servlet.DispatcherType;
 import java.util.List;
 import java.util.Arrays;
 
@@ -9,9 +10,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -28,6 +31,7 @@ import com.example.demo.security.JwtAuthenticationFilter;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
+@EnableScheduling
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
@@ -50,7 +54,8 @@ public class SecurityConfig {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> {
-                    authorize.requestMatchers("/api/auth/**").permitAll()
+                    authorize.requestMatchers(SecurityConfig::isErrorHandlerDispatch).permitAll()
+                            .requestMatchers("/api/auth/**").permitAll()
                             .requestMatchers("/api/health").permitAll()
                             .requestMatchers(HttpMethod.GET, "/api/jobs").permitAll()
                             .requestMatchers("/api/student/**").hasRole("STUDENT")
@@ -67,6 +72,16 @@ public class SecurityConfig {
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    private static boolean isErrorHandlerDispatch(HttpServletRequest request) {
+        if (request.getDispatcherType() != DispatcherType.ERROR) {
+            return false;
+        }
+        String contextPath = request.getContextPath();
+        return "/error".equals(request.getServletPath())
+                || (request.getRequestURI() != null
+                        && request.getRequestURI().equals(contextPath + "/error"));
     }
 
     @Bean

@@ -8,10 +8,16 @@ import jakarta.persistence.LockModeType;
 import com.example.demo.entity.RefreshToken;
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
     Optional<RefreshToken> findByTokenHash(String tokenHash);
+    @Query("select t.user.id from RefreshToken t where t.tokenHash = :hash")
+    Optional<Long> findUserIdByTokenHash(@Param("hash") String hash);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from RefreshToken t where t.tokenHash = :hash")
     Optional<RefreshToken> findByTokenHashForUpdate(@Param("hash") String hash);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from RefreshToken t where t.sessionId = :sessionId")
+    java.util.List<RefreshToken> findBySessionIdForUpdate(@Param("sessionId") String sessionId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from RefreshToken t where t.user.id = :userId and t.revokedAt is null")
     java.util.List<RefreshToken> findActiveByUserIdForUpdate(@Param("userId") Long userId);
+    boolean existsBySessionIdAndRevokedAtIsNullAndExpiresAtAfter(String sessionId, java.time.Instant now);
 }

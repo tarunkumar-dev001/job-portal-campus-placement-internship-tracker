@@ -1,9 +1,11 @@
 package com.example.demo;
 
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +13,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.example.demo.dto.AuthFlowDtos.*;
 import com.example.demo.dto.AuthFlowDtos.TokenResponse;
@@ -29,9 +33,13 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.reset;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import org.mockito.ArgumentCaptor;
 
 @SpringBootTest
+@AutoConfigureMockMvc
 @Transactional
 class AuthenticationSecurityTokenIntegrationTests {
     @Autowired UserRepository users;
@@ -40,6 +48,9 @@ class AuthenticationSecurityTokenIntegrationTests {
     @Autowired AuthSecurityService auth;
     @Autowired AuthService authService;
     @Autowired PasswordEncoder passwordEncoder;
+    @Autowired StudentProfileRepository profiles;
+    @Autowired MockMvc mvc;
+    @Autowired ObjectMapper json;
     @MockitoBean AuthTokenSink tokenSink;
 
     private User user(String email) {
@@ -66,6 +77,43 @@ class AuthenticationSecurityTokenIntegrationTests {
         auth.verifyEmail(new TokenRequest(deliveredToken.getValue()));
         AuthResponse session = authService.login(new LoginRequest(request.email(), request.password()));
         assertNotNull(session.token());
+    }
+
+    @Test
+    void publicRegistrationRejectsPrivilegedRoles() throws Exception {
+        for (User.Role role : List.of(User.Role.PLACEMENT_OFFICER, User.Role.ADMIN)) {
+            String email = role.name().toLowerCase() + "-public@example.com";
+            RegisterRequest request = new RegisterRequest(email, "Long-Enough-Test-Password",
+                    role, null, null, null, null, null, null);
+
+            mvc.perform(post("/api/auth/register")
+                            .contentType(APPLICATION_JSON)
+                            .content(json.writeValueAsString(request)))
+                    .andExpect(status().isBadRequest());
+
+            assertTrue(users.findByEmail(email).isEmpty());
+        }
+    }
+
+    @Test
+    void publicRegistrationContinuesToAllowStudentAndRecruiter() throws Exception {
+        RegisterRequest student = new RegisterRequest("public-student@example.com", "Long-Enough-Test-Password",
+                User.Role.STUDENT, "Public Student", "PUBLIC-1", "Computer Science", 8.5, 0, null);
+        RegisterRequest recruiter = new RegisterRequest("public-recruiter@example.com", "Long-Enough-Test-Password",
+                User.Role.RECRUITER, null, null, null, null, null, null);
+
+        mvc.perform(post("/api/auth/register")
+                        .contentType(APPLICATION_JSON)
+                        .content(json.writeValueAsString(student)))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/auth/register")
+                        .contentType(APPLICATION_JSON)
+                        .content(json.writeValueAsString(recruiter)))
+                .andExpect(status().isCreated());
+
+        assertEquals(User.Role.STUDENT, users.findByEmail(student.email()).orElseThrow().getRole());
+        assertTrue(profiles.findByUserId(users.findByEmail(student.email()).orElseThrow().getId()).isPresent());
+        assertEquals(User.Role.RECRUITER, users.findByEmail(recruiter.email()).orElseThrow().getRole());
     }
 
     @Test

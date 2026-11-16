@@ -22,12 +22,15 @@ public class AdminService {
     private final PlacementDriveRepository drives;
     private final PlacementSelectionRepository selections;
     private final AuditLogRepository auditLogs;
+    private final RefreshTokenRepository refreshTokens;
 
     public AdminService(UserRepository users, CollegeRepository colleges, CompanyRepository companies,
             PlacementOfficerProfileRepository officers, PlacementDriveRepository drives,
-            PlacementSelectionRepository selections, AuditLogRepository auditLogs) {
+            PlacementSelectionRepository selections, AuditLogRepository auditLogs,
+            RefreshTokenRepository refreshTokens) {
         this.users = users; this.colleges = colleges; this.companies = companies;
         this.officers = officers; this.drives = drives; this.selections = selections; this.auditLogs = auditLogs;
+        this.refreshTokens = refreshTokens;
     }
 
     public List<UserResponse> users() {
@@ -36,8 +39,14 @@ public class AdminService {
 
     @Transactional
     public UserResponse setUserStatus(String actor, Long userId, UserStatusRequest request) {
-        User user = user(userId);
+        User user = users.findByIdForUpdate(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
         user.setEnabled(request.enabled());
+        if (!request.enabled()) {
+            Instant revokedAt = Instant.now();
+            refreshTokens.findActiveByUserIdForUpdate(userId)
+                    .forEach(token -> token.setRevokedAt(revokedAt));
+        }
         audit(actor, "USER_STATUS_CHANGED", "User", String.valueOf(userId), Boolean.toString(request.enabled()));
         return toUser(users.save(user));
     }
