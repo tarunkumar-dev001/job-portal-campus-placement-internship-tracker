@@ -15,7 +15,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.security.Principal;
 
 import com.example.demo.entity.SecurityToken;
+import com.example.demo.entity.PlacementOfficerProfile;
 import com.example.demo.entity.User;
+import com.example.demo.repository.PlacementOfficerProfileRepository;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.service.AuthTokenSink;
 
@@ -23,10 +25,13 @@ import com.example.demo.service.AuthTokenSink;
 @Profile("e2e")
 class E2eAdminBootstrap implements ApplicationRunner {
     private final UserRepository users;
+    private final PlacementOfficerProfileRepository officers;
     private final PasswordEncoder passwords;
 
-    E2eAdminBootstrap(UserRepository users, PasswordEncoder passwords) {
+    E2eAdminBootstrap(UserRepository users, PlacementOfficerProfileRepository officers,
+            PasswordEncoder passwords) {
         this.users = users;
+        this.officers = officers;
         this.passwords = passwords;
     }
 
@@ -38,6 +43,18 @@ class E2eAdminBootstrap implements ApplicationRunner {
                 .role(User.Role.ADMIN)
                 .enabled(true)
                 .emailVerified(true)
+                .build()));
+
+        User officer = users.findByEmail("officer@e2e.test").orElseGet(() -> users.save(User.builder()
+                .email("officer@e2e.test")
+                .password(passwords.encode("E2e-Officer-Only-Password!"))
+                .role(User.Role.PLACEMENT_OFFICER)
+                .enabled(true)
+                .emailVerified(false)
+                .build()));
+        officers.findByUserId(officer.getId()).orElseGet(() -> officers.save(PlacementOfficerProfile.builder()
+                .user(officer)
+                .fullName("E2E Officer")
                 .build()));
     }
 }

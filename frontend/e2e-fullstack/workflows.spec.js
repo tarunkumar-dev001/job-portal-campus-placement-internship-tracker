@@ -1,30 +1,62 @@
 import { expect, test } from '@playwright/test';
 
-const apiBase = 'http://localhost:8080/api';
+const apiBase = 'http://127.0.0.1:8080/api';
 const password = `Fullstack-E2E-${Date.now()}-Pass!`;
 
-async function requestJson(context, path, { method = 'GET', body, token } = {}) {
-  const response = await context.fetch(`${apiBase}${path}`, {
-    method,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(body ? { data: body } : {}),
-  });
+function registrationResponseHeaders(response) {
+  const headers = response.headers();
+  return Object.fromEntries(Object.entries(headers)
+    .filter(([name]) => name === 'content-type'
+      || name === 'location'
+      || /(?:request|correlation)[-_]?id$/i.test(name)
+      || /^(?:traceparent|x-b3-traceid|x-amzn-trace-id|x-cloud-trace-context)$/i.test(name))
+    .map(([name, value]) => {
+      if (name === 'content-type') {
+        return [name, value];
+      }
+      if (name !== 'location') {
+        return [name, true];
+      }
+      try {
+        const location = new URL(value, apiBase);
+        return [name, `${location.origin}${location.pathname === '/' ? '/' : '/[redacted-path]'}${location.search ? '?[redacted-query]' : ''}`];
+      } catch {
+        return [name, '[redacted-location]'];
+      }
+    }));
+}
+
+async function requestJson(context, path, { method = 'GET', body, token, registrationRole } = {}) {
+  const diagnosticPath = path === '/auth/register' ? path : '[path omitted]';
+  let response;
+  try {
+    response = await context.fetch(`${apiBase}${path}`, {
+      method,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(body ? { data: body } : {}),
+    });
+  } catch {
+    throw new Error(`${method} ${diagnosticPath} failed before receiving a response`);
+  }
   const responseBody = response.status() === 204 ? null : await response.json().catch(() => null);
   if (!response.ok()) {
-    throw new Error(`${method} ${path} failed (${response.status()}): ${JSON.stringify(responseBody)}`);
+    if (registrationRole) {
+      console.error('[E2E] Registration request failed', JSON.stringify({
+        role: registrationRole,
+        status: response.status(),
+        headers: registrationResponseHeaders(response),
+        body: '[response body omitted for credential safety]',
+      }));
+    }
+    throw new Error(`${method} ${diagnosticPath} failed (${response.status()}): [response body omitted for credential safety]`);
   }
   return responseBody;
 }
 
-async function registerAndVerify(context, { email, role, fullName, rollNumber, department, cgpa, backlogs }) {
-  const registered = await requestJson(context, '/auth/register', {
-    method: 'POST',
-    body: { email, password, role, fullName, rollNumber, department, cgpa, backlogs },
-  });
-  expect(registered.message).toContain('Account created');
+async function verifyAndLogin(context, { email, role, userPassword = password }) {
   await requestJson(context, '/auth/verification/request', {
     method: 'POST', body: { email },
   });
@@ -34,11 +66,24 @@ async function registerAndVerify(context, { email, role, fullName, rollNumber, d
     method: 'POST', body: { token: message.token },
   });
   const session = await requestJson(context, '/auth/login', {
-    method: 'POST', body: { email, password },
+    method: 'POST', body: { email, password: userPassword },
   });
   expect(session.role).toBe(role);
   expect(session.token).toBeTruthy();
   return session;
+}
+
+async function registerAndVerify(context, { email, role, fullName, rollNumber, department, cgpa, backlogs }) {
+  console.info('[E2E] Registration role:', role);
+  const registered = await requestJson(context, '/auth/register', {
+    method: 'POST',
+    body: { email, password, role, fullName, rollNumber, department, cgpa, backlogs },
+    registrationRole: role,
+  });
+  const hasExpectedRegistrationMessage = typeof registered?.message === 'string'
+    && registered.message.includes('Account created');
+  expect(hasExpectedRegistrationMessage).toBe(true);
+  return verifyAndLogin(context, { email, role });
 }
 
 async function loginPage(page, email, userPassword = password) {
@@ -47,6 +92,18 @@ async function loginPage(page, email, userPassword = password) {
   await page.getByLabel('Password').fill(userPassword);
   await page.getByRole('button', { name: 'Sign in' }).click();
 }
+
+test('provisioned placement officer can verify and access the dashboard', async ({ page, request }) => {
+  const officerEmail = 'officer@e2e.test';
+  const officerPassword = 'E2e-Officer-Only-Password!';
+  await verifyAndLogin(request, {
+    email: officerEmail,
+    role: 'PLACEMENT_OFFICER',
+    userPassword: officerPassword,
+  });
+  await loginPage(page, officerEmail, officerPassword);
+  await expect(page.getByRole('heading', { name: 'Placement Officer Dashboard' })).toBeVisible();
+});
 
 test('real backend and browser cover student, recruiter, placement officer, and admin workflows', async ({ page, request, browser }) => {
   const suffix = Date.now();
@@ -58,14 +115,16 @@ test('real backend and browser cover student, recruiter, placement officer, and 
   const adminToken = adminLogin.token;
   const studentEmail = `student-${suffix}@e2e.test`;
   const recruiterEmail = `recruiter-${suffix}@e2e.test`;
-  const officerEmail = `officer-${suffix}@e2e.test`;
+  const officerEmail = 'officer@e2e.test';
   const student = await registerAndVerify(request, {
     email: studentEmail, role: 'STUDENT', fullName: 'E2E Student', rollNumber: `E2E-${suffix}`,
     department: 'Computer Science', cgpa: 8.5, backlogs: 0,
   });
   const recruiter = await registerAndVerify(request, { email: recruiterEmail, role: 'RECRUITER' });
-  const officer = await registerAndVerify(request, {
-    email: officerEmail, role: 'PLACEMENT_OFFICER', fullName: 'E2E Officer',
+  const officer = await verifyAndLogin(request, {
+    email: officerEmail,
+    role: 'PLACEMENT_OFFICER',
+    userPassword: 'E2e-Officer-Only-Password!',
   });
 
   const college = await requestJson(request, '/admin/colleges', {
@@ -121,7 +180,7 @@ test('real backend and browser cover student, recruiter, placement officer, and 
   await expect(page.getByText('E2E Software Engineer')).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('token'))).not.toBe('expired.access.token');
   await page.getByRole('button', { name: 'Apply' }).click();
-  await expect(page.getByText('Application submitted')).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: /^Application submitted\.$/ })).toBeVisible();
   const application = await requestJson(request, '/recruiter/jobs', { token: recruiter.token });
   expect(application.some(item => item.id === job.id)).toBeTruthy();
   const applicants = await requestJson(request, `/recruiter/jobs/${job.id}/applications`, { token: recruiter.token });
@@ -174,7 +233,7 @@ test('real backend and browser cover student, recruiter, placement officer, and 
 
   const officerContext = await browser.newContext({ baseURL: 'http://127.0.0.1:4174' });
   const officerPage = await officerContext.newPage();
-  await loginPage(officerPage, officerEmail);
+  await loginPage(officerPage, officerEmail, 'E2e-Officer-Only-Password!');
   await expect(officerPage.getByRole('heading', { name: 'Placement Officer Dashboard' })).toBeVisible();
   await expect(officerPage.getByText('E2E Placement Drive')).toBeVisible();
 

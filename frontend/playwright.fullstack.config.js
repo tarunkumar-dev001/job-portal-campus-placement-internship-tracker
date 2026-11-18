@@ -12,9 +12,11 @@ export default defineConfig({
   webServer: [
     {
       command: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\start-fullstack-e2e.ps1',
-      url: 'http://127.0.0.1:8080/api/auth/login',
+      url: 'http://127.0.0.1:8080/api/health',
       reuseExistingServer: false,
       timeout: 180_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
     },
     {
       command: 'npm.cmd run dev -- --host 127.0.0.1 --port 4174 --strictPort',
