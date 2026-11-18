@@ -59,12 +59,47 @@ class AuthAttemptLimiterTests {
                 assertEquals(HttpStatus.TOO_MANY_REQUESTS, exception.getStatusCode());
             }
         }
-        assertEquals(capacity, limiter.trackedKeyCount());
+        int emailKeyCount = limiter.trackedKeyCount();
+        assertTrue(emailKeyCount > 0);
+        assertTrue(emailKeyCount < capacity);
         assertTooManyRequests(() -> limiter.recordVerificationOrResetAttempt("capacity@example.com"));
+
+        limiter.recordLoginAttempt("login@example.com", "203.0.113.12");
+        assertEquals(emailKeyCount + 2, limiter.trackedKeyCount());
 
         clock.advanceSeconds(61);
         limiter.recordVerificationOrResetAttempt("capacity@example.com");
         assertEquals(1, limiter.trackedKeyCount());
+    }
+
+    @Test
+    void fullAccountPartitionDoesNotEvictLiveKeysOrBlockEmailFlows() {
+        MutableClock clock = new MutableClock();
+        AuthAttemptLimiter limiter = limiter(32, 5, 60, 1000, 900, 1000, 60, clock);
+
+        for (int index = 0; index < 19; index++) {
+            limiter.recordLoginAttempt("account-" + index + "@example.com", "203.0.113.20");
+        }
+        assertTooManyRequests(() -> limiter.recordLoginAttempt("new-account@example.com", "203.0.113.20"));
+
+        limiter.recordLoginAttempt("account-0@example.com", "203.0.113.20");
+        limiter.recordVerificationOrResetAttempt("reset@example.com");
+        assertEquals(21, limiter.trackedKeyCount());
+    }
+
+    @Test
+    void fullIpPartitionDoesNotBlockNewAccountOnAnExistingIpOrEmailFlows() {
+        MutableClock clock = new MutableClock();
+        AuthAttemptLimiter limiter = limiter(32, 5, 60, 1000, 900, 1000, 60, clock);
+
+        for (int index = 0; index < 6; index++) {
+            limiter.recordLoginAttempt("account-" + index + "@example.com", "203.0.113." + index);
+        }
+        assertTooManyRequests(() -> limiter.recordLoginAttempt("new-account@example.com", "203.0.113.6"));
+
+        limiter.recordLoginAttempt("new-account@example.com", "203.0.113.0");
+        limiter.recordVerificationOrResetAttempt("reset@example.com");
+        assertEquals(14, limiter.trackedKeyCount());
     }
 
     @Test
