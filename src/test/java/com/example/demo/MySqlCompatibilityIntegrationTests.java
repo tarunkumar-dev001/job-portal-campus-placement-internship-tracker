@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -31,7 +31,6 @@ import com.example.demo.dto.placement.SelectionRequest;
 import com.example.demo.dto.student.StudentDtos.OfferStatusRequest;
 import com.example.demo.entity.*;
 import com.example.demo.repository.*;
-import com.example.demo.security.JwtUtils;
 import com.example.demo.service.AuthService;
 import com.example.demo.service.AuthSecurityService;
 import com.example.demo.service.AuthTokenSink;
@@ -43,9 +42,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
-@EnabledIfEnvironmentVariable(
-        named = "MYSQL_TEST_URL",
-        matches = "jdbc:mysql://127\\.0\\.0\\.1:[0-9]+/careerconnect_phase8_fresh.*")
+@ExtendWith(MySqlCompatibilityTestSafety.class)
 class MySqlCompatibilityIntegrationTests {
     @Autowired Flyway flyway;
     @Autowired JdbcTemplate jdbc;
@@ -64,25 +61,32 @@ class MySqlCompatibilityIntegrationTests {
     @Autowired PlacementService placementService;
     @Autowired CollegeRepository colleges;
     @Autowired PlacementOfficerProfileRepository officerProfiles;
-    @Autowired JwtUtils jwtUtils;
     @MockitoBean AuthTokenSink tokenSink;
 
     @DynamicPropertySource
     static void configureMysql(DynamicPropertyRegistry properties) {
-        properties.add("spring.datasource.url", () -> System.getenv("MYSQL_TEST_URL"));
-        properties.add("spring.datasource.username", () -> System.getenv("MYSQL_TEST_USERNAME"));
-        properties.add("spring.datasource.password", () -> System.getenv("MYSQL_TEST_PASSWORD"));
+        MySqlCompatibilityTestSafety.Configuration configuration =
+                MySqlCompatibilityTestSafety.currentConfiguration();
+        MySqlCompatibilityTestSafety.verifyEmptyDatabases(configuration);
+        properties.add("spring.datasource.url", () -> configuration.fresh().url());
+        properties.add("spring.datasource.username", configuration::username);
+        properties.add("spring.datasource.password", configuration::password);
         properties.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
         properties.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         properties.add("spring.flyway.enabled", () -> "true");
         properties.add("spring.flyway.validate-on-migrate", () -> "true");
+        properties.add("spring.flyway.url", () -> configuration.fresh().url());
+        properties.add("spring.flyway.user", configuration::username);
+        properties.add("spring.flyway.password", configuration::password);
+        properties.add("spring.flyway.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
     }
 
     @Test
     void freshMigrationsValidateAndReportActualMysqlVersion() {
         flyway.validate();
         var applied = flyway.info().applied();
-        assertEquals(5, applied.length);
+        assertEquals(6, applied.length);
+        assertEquals("6", applied[applied.length - 1].getVersion().getVersion());
         for (var migration : applied) {
             assertNotNull(migration.getChecksum(), "Missing checksum for migration " + migration.getVersion());
         }
@@ -94,19 +98,20 @@ class MySqlCompatibilityIntegrationTests {
 
     @Test
     void migrationUpgradeFromVersionTwoValidatesWithoutRepair() {
-        String url = System.getenv("MYSQL_TEST_UPGRADE_URL");
-        String username = System.getenv("MYSQL_TEST_USERNAME");
-        String password = System.getenv("MYSQL_TEST_PASSWORD");
-        assertNotNull(url, "MYSQL_TEST_UPGRADE_URL must refer to a second disposable schema");
+        MySqlCompatibilityTestSafety.Configuration configuration =
+                MySqlCompatibilityTestSafety.currentConfiguration();
+        String url = configuration.upgrade().url();
 
-        Flyway initial = Flyway.configure().dataSource(url, username, password)
+        Flyway initial = Flyway.configure().dataSource(url, configuration.username(), configuration.password())
                 .locations("classpath:db/migration").target("2").load();
         assertEquals(2, initial.migrate().migrationsExecuted);
-        Flyway upgrade = Flyway.configure().dataSource(url, username, password)
+        Flyway upgrade = Flyway.configure().dataSource(url, configuration.username(), configuration.password())
                 .locations("classpath:db/migration").load();
-        assertEquals(3, upgrade.migrate().migrationsExecuted);
+        assertEquals(4, upgrade.migrate().migrationsExecuted);
         upgrade.validate();
-        assertEquals(5, upgrade.info().applied().length);
+        var applied = upgrade.info().applied();
+        assertEquals(6, applied.length);
+        assertEquals("6", applied[applied.length - 1].getVersion().getVersion());
     }
 
     @Test
@@ -133,7 +138,7 @@ class MySqlCompatibilityIntegrationTests {
                 .orElseThrow().getRevokedAt());
         assertTrue(passwordEncoder.matches("New-Test-Password-456",
                 users.findById(student.getId()).orElseThrow().getPassword()));
-        assertNotNull(jwtUtils.generateToken(student.getEmail(), student.getRole().name()));
+        assertNotNull(session.token());
 
         User recruiter = users.saveAndFlush(User.builder().email("recruiter-" + suffix + "@example.test")
                 .password("{bcrypt}unused").role(User.Role.RECRUITER).enabled(true).emailVerified(true).build());
@@ -141,7 +146,8 @@ class MySqlCompatibilityIntegrationTests {
                 .companyName("Example Co").minCgpa(6.0).maxBacklogs(2).deadline(LocalDate.now().plusDays(30))
                 .recruiterId(recruiter.getId()).published(true).closed(false).build());
         var application = studentService.apply(student.getEmail(), job.getId());
-        recruiterService.updateStatus(recruiter.getEmail(), application.id(), new StatusRequest("SHORTLISTED", "Meets criteria"));
+        recruiterService.updateStatus(recruiter.getEmail(), application.id(),
+                new StatusRequest("SHORTLISTED", "Meets criteria", null));
         recruiterService.scheduleInterview(recruiter.getEmail(), application.id(),
                 new InterviewRequest(Instant.now().plusSeconds(3600), "ONLINE", null, "MySQL integration"));
         var offer = recruiterService.createOffer(recruiter.getEmail(), application.id(),
