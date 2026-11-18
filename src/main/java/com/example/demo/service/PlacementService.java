@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.example.demo.dto.placement.*;
 import com.example.demo.entity.*;
+import com.example.demo.entity.Application.Status;
 import com.example.demo.entity.DriveRegistration.RegistrationStatus;
 import com.example.demo.entity.PlacementDrive.DriveStatus;
 import com.example.demo.repository.*;
@@ -27,17 +28,24 @@ public class PlacementService {
     private final PlacementDriveRepository drives;
     private final DriveRegistrationRepository registrations;
     private final PlacementSelectionRepository selections;
+    private final ApplicationStatusHistoryRepository applicationHistory;
+    private final ApplicationRepository applications;
     private final StudentProfileRepository students;
     private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
+    private final NotificationRepository notifications;
 
     public PlacementService(CollegeRepository colleges, DepartmentRepository departments,
             PlacementOfficerProfileRepository officerProfiles, PlacementDriveRepository drives,
             DriveRegistrationRepository registrations, PlacementSelectionRepository selections,
-            StudentProfileRepository students, UserRepository users, PasswordEncoder passwordEncoder) {
+            ApplicationStatusHistoryRepository applicationHistory, ApplicationRepository applications,
+            StudentProfileRepository students, UserRepository users, PasswordEncoder passwordEncoder,
+            NotificationRepository notifications) {
         this.colleges = colleges; this.departments = departments; this.officerProfiles = officerProfiles;
         this.drives = drives; this.registrations = registrations; this.selections = selections;
+        this.applicationHistory = applicationHistory; this.applications = applications;
         this.students = students; this.users = users; this.passwordEncoder = passwordEncoder;
+        this.notifications = notifications;
     }
 
     public CollegeResponse createCollege(String email, CollegeRequest request) {
@@ -49,23 +57,27 @@ public class PlacementService {
         return toCollege(colleges.save(college));
     }
 
-    public List<CollegeResponse> colleges() {
-        return colleges.findAll().stream().map(this::toCollege).toList();
+    @Transactional(readOnly = true)
+    public List<CollegeResponse> colleges(String email) {
+        return List.of(toCollege(assignedCollege(officer(email))));
     }
 
-    public CollegeResponse college(Long id) {
-        return toCollege(colleges.findById(id).orElseThrow(() -> notFound("College")));
+    @Transactional(readOnly = true)
+    public CollegeResponse college(String email, Long id) {
+        return toCollege(ownedCollege(email, id));
     }
 
-    public DepartmentResponse createDepartment(Long collegeId, DepartmentRequest request) {
-        College college = collegeEntity(collegeId);
+    @Transactional
+    public DepartmentResponse createDepartment(String email, Long collegeId, DepartmentRequest request) {
+        College college = ownedCollege(email, collegeId);
         Department department = Department.builder().college(college).code(request.code().trim().toUpperCase())
                 .name(request.name().trim()).seats(request.seats()).build();
         return toDepartment(departments.save(department));
     }
 
-    public List<DepartmentResponse> departments(Long collegeId) {
-        collegeEntity(collegeId);
+    @Transactional(readOnly = true)
+    public List<DepartmentResponse> departments(String email, Long collegeId) {
+        ownedCollege(email, collegeId);
         return departments.findByCollegeId(collegeId).stream().map(this::toDepartment).toList();
     }
 
@@ -129,6 +141,15 @@ public class PlacementService {
         registration.setStatus(RegistrationStatus.SELECTED);
         registrations.save(registration);
         PlacementSelection saved = selections.save(selection);
+        String companyName = drive.getCompanyName() == null || drive.getCompanyName().isBlank()
+                ? drive.getTitle() : drive.getCompanyName();
+        String selectedJobTitle = saved.getJobTitle() == null || saved.getJobTitle().isBlank()
+                ? (drive.getJobTitle() == null || drive.getJobTitle().isBlank()
+                        ? drive.getTitle() : drive.getJobTitle())
+                : saved.getJobTitle();
+        notifications.save(Notification.builder().user(student).title("Placement selection recorded")
+                .message("You were selected for " + selectedJobTitle + " at " + companyName + ".")
+                .type("PLACEMENT_SELECTION").readFlag(false).createdAt(saved.getSelectedAt()).build());
         return new SelectionResponse(saved.getId(), drive.getId(), student.getId(), student.getEmail(),
                 saved.getJobTitle(), saved.getPackageAmount(), saved.getSelectedAt());
     }
@@ -171,19 +192,28 @@ public class PlacementService {
         return new StudentImportResponse(imported, skipped, errors);
     }
 
+    @Transactional(readOnly = true)
     public PlacementStatsResponse stats(String email) {
         College college = assignedCollege(officer(email));
-        List<PlacementSelection> allSelections = selections.findByDriveCollegeId(college.getId());
-        List<PlacementDrive> collegeDrives = drives.findByCollegeIdOrderByRegistrationDeadlineDesc(college.getId());
-        long active = collegeDrives.stream().filter(d -> d.getStatus() == DriveStatus.OPEN).count();
-        long registered = collegeDrives.stream().mapToLong(d -> registrations.countByDriveId(d.getId())).sum();
-        Map<String, Long> byDepartment = new TreeMap<>();
-        for (PlacementSelection selection : allSelections) {
-            StudentProfile profile = students.findByUserId(selection.getStudent().getId()).orElse(null);
-            String department = profile == null ? "Unassigned" : profile.getDepartment();
-            byDepartment.merge(department, 1L, Long::sum);
-        }
-        return new PlacementStatsResponse(active, registered, allSelections.size(), byDepartment);
+        long active = drives.countByCollegeIdAndStatus(college.getId(), DriveStatus.OPEN);
+        long registered = registrations.countByCollegeId(college.getId());
+        Map<String, Long> selectionsByDepartment = DashboardStatsMapper.countMap(
+                selections.countSelectionsByDepartment(college.getId()));
+        long selectedStudents = selections.countByDriveCollegeId(college.getId());
+        long totalStudents = students.countByCollegeId(college.getId());
+        long uniquePlaced = selections.countDistinctCollegeStudentsPlaced(college.getId());
+        long unplaced = Math.max(0, totalStudents - uniquePlaced);
+        Map<String, Long> rejectionReasons = DashboardStatsMapper.countMap(
+                applicationHistory.countRejectionReasonsByCollege(college.getId(), Status.REJECTED));
+        return new PlacementStatsResponse(active, registered, selectedStudents, selectionsByDepartment,
+                totalStudents, DashboardStatsMapper.countMap(students.countStudentsByDepartment(college.getId())),
+                drives.countByCollegeId(college.getId()), applications.countByStudentCollegeId(college.getId()),
+                registrations.countByCollegeId(college.getId()),
+                applicationHistory.countDistinctShortlistedStudentsByCollege(college.getId(), Status.SHORTLISTED),
+                uniquePlaced, unplaced, DashboardStatsMapper.percentage(uniquePlaced, totalStudents),
+                applications.countByStudentCollegeIdAndStatus(college.getId(), Status.REJECTED),
+                rejectionReasons, DashboardStatsMapper.completeCounts(Status.class,
+                        applications.countByStatusForCollege(college.getId())));
     }
 
     private PlacementOfficerProfile officer(String email) {
@@ -194,13 +224,18 @@ public class PlacementService {
         if (officer.getCollege() == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "No college assigned");
         return officer.getCollege();
     }
+    private College ownedCollege(String email, Long collegeId) {
+        College college = assignedCollege(officer(email));
+        if (!Objects.equals(college.getId(), collegeId))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "College belongs to another placement officer");
+        return college;
+    }
     private PlacementDrive ownedDrive(String email, Long driveId) {
         PlacementDrive drive = drives.findById(driveId).orElseThrow(() -> notFound("Placement drive"));
         if (!Objects.equals(drive.getCollege().getId(), assignedCollege(officer(email)).getId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Placement drive belongs to another college");
         return drive;
     }
-    private College collegeEntity(Long id) { return colleges.findById(id).orElseThrow(() -> notFound("College")); }
     private ResponseStatusException notFound(String name) { return new ResponseStatusException(HttpStatus.NOT_FOUND, name + " not found"); }
     private String blankToNull(String value) { return value == null || value.isBlank() ? null : value; }
     private DriveRegistrationResponse toRegistration(DriveRegistration registration) {

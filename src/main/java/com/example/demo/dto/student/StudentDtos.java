@@ -26,8 +26,10 @@ public final class StudentDtos {
                                        boolean saved) {}
     public record ApplicationResponse(Long id, Long jobId, String jobTitle, String companyName,
                                       String status, Instant appliedAt, String recruiterFeedback,
-                                      List<StatusHistoryResponse> history, InterviewResponse interview) {}
-    public record StatusHistoryResponse(String status, String changedBy, Instant changedAt, String note) {}
+                                      Instant withdrawnAt, List<StatusHistoryResponse> history,
+                                      InterviewResponse interview) {}
+    public record StatusHistoryResponse(String status, String changedBy, Instant changedAt,
+                                        String note, String rejectionExplanation) {}
     public record InterviewResponse(Long id, Instant scheduledAt, String mode, String locationOrLink,
                                     String notes, String feedback) {}
     public record NotificationResponse(Long id, String title, String message, String type,

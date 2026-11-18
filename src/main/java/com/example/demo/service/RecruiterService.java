@@ -13,12 +13,15 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.example.demo.dto.recruiter.RecruiterDtos.*;
+import com.example.demo.dto.DashboardStatsDtos.RecruiterDashboardStats;
 import com.example.demo.entity.*;
 import com.example.demo.entity.Application.Status;
 import com.example.demo.repository.*;
 
 @Service
 public class RecruiterService {
+    private static final int MAX_STATUS_NOTE_LENGTH = 1000;
+
     private final UserRepository users;
     private final CompanyRepository companies;
     private final JobRepository jobs;
@@ -110,6 +113,27 @@ public class RecruiterService {
         return jobs.findByRecruiterId(recruiter(email).getId());
     }
 
+    @Transactional(readOnly = true)
+    public RecruiterDashboardStats dashboardStats(String email) {
+        User recruiter = recruiter(email);
+        Long recruiterId = recruiter.getId();
+        List<Object[]> offerCounts = offers.countByStatusForRecruiter(recruiterId);
+        return new RecruiterDashboardStats(jobs.countNonInternshipJobsByRecruiter(recruiterId),
+                jobs.countByRecruiterIdAndInternshipTrue(recruiterId),
+                jobs.countActiveJobsByRecruiter(recruiterId, LocalDate.now()),
+                applications.countDistinctApplicantsByRecruiter(recruiterId),
+                DashboardStatsMapper.completeCounts(Status.class,
+                        applications.countByStatusForRecruiter(recruiterId)),
+                applications.countDistinctApplicantsByRecruiterAndStatus(recruiterId, Status.SHORTLISTED),
+                applications.countDistinctApplicantsByRecruiterAndStatus(recruiterId, Status.REJECTED),
+                interviews.countUpcomingByRecruiter(recruiterId,
+                        List.of(InterviewSchedule.Status.SCHEDULED, InterviewSchedule.Status.RESCHEDULED),
+                        Instant.now()),
+                offerCounts.stream().mapToLong(row -> ((Number) row[1]).longValue()).sum(),
+                countOfferStatus(offerCounts, Offer.Status.ACCEPTED),
+                countOfferStatus(offerCounts, Offer.Status.DECLINED));
+    }
+
     public void deleteJob(String email, Long jobId) {
         Job job = ownedJob(email, jobId);
         if (!applications.findByJobId(jobId).isEmpty())
@@ -127,13 +151,28 @@ public class RecruiterService {
     public ApplicantResponse updateStatus(String email, Long applicationId, StatusRequest request) {
         Application application = ownedApplication(email, applicationId);
         Status next;
-        try { next = Status.valueOf(request.status().toUpperCase()); }
+        try { next = Status.valueOf(request.status().trim().toUpperCase(Locale.ROOT)); }
         catch (IllegalArgumentException exception) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid application status"); }
         validateTransition(application.getStatus(), next);
+        if ((request.note() != null && request.note().length() > MAX_STATUS_NOTE_LENGTH)
+                || (request.rejectionExplanation() != null
+                        && request.rejectionExplanation().length() > MAX_STATUS_NOTE_LENGTH))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Application status notes must not exceed 1000 characters");
+        String note;
+        if (next == Status.REJECTED) {
+            note = trimToNull(request.rejectionExplanation());
+            if (note == null) note = trimToNull(request.note());
+            if (note == null || note.length() < 10)
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A rejection explanation of at least 10 characters is required");
+        } else {
+            note = trimToNull(request.note());
+        }
         application.setStatus(next);
         applications.save(application);
         history.save(ApplicationStatusHistory.builder().application(application).status(next)
-                .changedBy(email).changedAt(Instant.now()).note(request.note()).build());
+                .changedBy(email).changedAt(Instant.now()).note(note).build());
         notifications.save(Notification.builder().user(application.getStudent()).title("Application status updated")
                 .message(application.getJob().getTitle() + ": " + next).type("APPLICATION_STATUS")
                 .readFlag(false).createdAt(Instant.now()).build());
@@ -149,6 +188,9 @@ public class RecruiterService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Interview time must be in the future");
         application.setStatus(Status.INTERVIEW_SCHEDULED);
         applications.save(application);
+        history.save(ApplicationStatusHistory.builder().application(application)
+                .status(Status.INTERVIEW_SCHEDULED).changedBy(email).changedAt(Instant.now())
+                .note("Interview scheduled").build());
         InterviewSchedule interview = InterviewSchedule.builder().application(application)
                 .scheduledAt(request.scheduledAt()).mode(request.mode()).locationOrLink(request.locationOrLink())
                 .notes(request.notes()).createdAt(Instant.now()).build();
@@ -186,10 +228,21 @@ public class RecruiterService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Interview cannot be rescheduled");
         if (request.scheduledAt().isBefore(Instant.now()))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Interview time must be in the future");
+        boolean scheduleChanged = !Objects.equals(interview.getScheduledAt(), request.scheduledAt())
+                || !Objects.equals(interview.getMode(), request.mode())
+                || !Objects.equals(normalizeOptionalForComparison(interview.getLocationOrLink()),
+                        normalizeOptionalForComparison(request.locationOrLink()))
+                || !Objects.equals(normalizeOptionalForComparison(interview.getNotes()),
+                        normalizeOptionalForComparison(request.notes()));
         interview.setScheduledAt(request.scheduledAt()); interview.setMode(request.mode());
         interview.setLocationOrLink(request.locationOrLink()); interview.setNotes(request.notes());
         interview.setStatus(InterviewSchedule.Status.RESCHEDULED);
-        return toInterview(interviews.save(interview));
+        InterviewSchedule saved = interviews.save(interview);
+        if (scheduleChanged)
+            notifyStudent(application, "Interview rescheduled",
+                    application.getJob().getTitle() + " at " + application.getJob().getCompanyName()
+                            + ": interview rescheduled to " + saved.getScheduledAt() + ".");
+        return toInterview(saved);
     }
 
     @Transactional
@@ -200,7 +253,11 @@ public class RecruiterService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Interview cannot be cancelled");
         interview.setStatus(InterviewSchedule.Status.CANCELLED);
         interview.setCancelledAt(Instant.now());
-        return toInterview(interviews.save(interview));
+        InterviewSchedule saved = interviews.save(interview);
+        notifyStudent(application, "Interview cancelled",
+                application.getJob().getTitle() + " at " + application.getJob().getCompanyName()
+                        + ": interview scheduled for " + saved.getScheduledAt() + " was cancelled.");
+        return toInterview(saved);
     }
 
     @Transactional(readOnly = true)
@@ -244,6 +301,9 @@ public class RecruiterService {
                 .packageAmount(request.packageAmount()).joiningDate(request.joiningDate())
                 .status(Offer.Status.ISSUED).createdAt(Instant.now()).updatedAt(Instant.now()).build();
         Offer saved = offers.save(offer);
+        notifyStudent(application, "Offer received",
+                application.getJob().getTitle() + " at " + application.getJob().getCompanyName()
+                        + ": a job offer is available in your offers.");
         audit(email, "OFFER_CREATED", applicationId, saved.getId());
         return toOffer(saved);
     }
@@ -265,6 +325,9 @@ public class RecruiterService {
         if (offer.getStatus() != Offer.Status.ISSUED || next != Offer.Status.WITHDRAWN)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Invalid offer status transition");
         offer.setStatus(next); offer.setUpdatedAt(Instant.now()); offers.save(offer);
+        notifyStudent(application, "Offer withdrawn",
+                application.getJob().getTitle() + " at " + application.getJob().getCompanyName()
+                        + ": the job offer has been withdrawn.");
         audit(email, "OFFER_" + next.name(), application.getId(), offer.getId());
         return toOffer(offer);
     }
@@ -311,6 +374,22 @@ public class RecruiterService {
                 .targetId(String.valueOf(offerId)).details("Application " + applicationId)
                 .createdAt(Instant.now()).build());
     }
+    private void notifyStudent(Application application, String title, String message) {
+        notifications.save(Notification.builder().user(application.getStudent()).title(title).message(message)
+                .type("APPLICATION").readFlag(false).createdAt(Instant.now()).build());
+    }
+    private String normalizeOptionalForComparison(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+    private long countOfferStatus(List<Object[]> counts, Offer.Status status) {
+        return counts.stream().filter(row -> status.equals(row[0]))
+                .mapToLong(row -> ((Number) row[1]).longValue()).sum();
+    }
+    private String trimToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
     private void validateTransition(Status current, Status next) {
         if (next == Status.OFFERED)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an offer with package details through the offers API");
@@ -325,7 +404,7 @@ public class RecruiterService {
     }
     private ApplicantResponse toApplicant(Application application) {
         StudentProfile profile = profiles.findByUserId(application.getStudent().getId()).orElse(null);
-        List<String> rows = history.findByApplicationIdOrderByChangedAtAsc(application.getId()).stream()
+        List<String> rows = history.findByApplicationIdOrderByChangedAtAscIdAsc(application.getId()).stream()
                 .map(row -> row.getChangedAt() + " " + row.getStatus()).toList();
         return new ApplicantResponse(application.getId(), application.getStudent().getId(),
                 profile == null ? null : profile.getFullName(), application.getStudent().getEmail(),

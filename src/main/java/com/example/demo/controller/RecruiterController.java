@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import com.example.demo.dto.recruiter.RecruiterDtos.*;
+import com.example.demo.dto.DashboardStatsDtos.RecruiterDashboardStats;
 import com.example.demo.service.RecruiterService;
 
 import jakarta.validation.Valid;
@@ -20,6 +21,11 @@ public class RecruiterController {
     private final RecruiterService service;
 
     public RecruiterController(RecruiterService service) { this.service = service; }
+
+    @GetMapping("/stats")
+    public RecruiterDashboardStats stats(Principal principal) {
+        return service.dashboardStats(principal.getName());
+    }
 
     @GetMapping("/company")
     public CompanyResponse company(Principal principal) { return service.company(principal.getName()); }

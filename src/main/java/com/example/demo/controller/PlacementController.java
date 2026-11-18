@@ -21,21 +21,25 @@ public class PlacementController {
     public PlacementController(PlacementService service) { this.service = service; }
 
     @GetMapping("/colleges")
-    public List<CollegeResponse> colleges() { return service.colleges(); }
+    public List<CollegeResponse> colleges(Principal principal) {
+        return service.colleges(principal.getName());
+    }
 
     @GetMapping("/colleges/{collegeId}")
-    public CollegeResponse college(@PathVariable Long collegeId) { return service.college(collegeId); }
+    public CollegeResponse college(Principal principal, @PathVariable Long collegeId) {
+        return service.college(principal.getName(), collegeId);
+    }
 
     @GetMapping("/colleges/{collegeId}/departments")
-    public List<DepartmentResponse> departments(@PathVariable Long collegeId) {
-        return service.departments(collegeId);
+    public List<DepartmentResponse> departments(Principal principal, @PathVariable Long collegeId) {
+        return service.departments(principal.getName(), collegeId);
     }
 
     @PostMapping("/colleges/{collegeId}/departments")
     @ResponseStatus(HttpStatus.CREATED)
-    public DepartmentResponse createDepartment(@PathVariable Long collegeId,
+    public DepartmentResponse createDepartment(Principal principal, @PathVariable Long collegeId,
                                                 @Valid @RequestBody DepartmentRequest request) {
-        return service.createDepartment(collegeId, request);
+        return service.createDepartment(principal.getName(), collegeId, request);
     }
 
     @GetMapping("/drives")

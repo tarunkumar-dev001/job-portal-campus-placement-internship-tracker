@@ -4,6 +4,7 @@ import java.nio.file.*;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.io.UncheckedIOException;
@@ -17,6 +18,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.example.demo.dto.student.StudentDtos.*;
+import com.example.demo.dto.DashboardStatsDtos.ApplicationActivity;
+import com.example.demo.dto.DashboardStatsDtos.StudentDashboardStats;
 import com.example.demo.entity.*;
 import com.example.demo.repository.*;
 import com.example.demo.entity.DriveRegistration.RegistrationStatus;
@@ -24,6 +27,8 @@ import com.example.demo.entity.PlacementDrive.DriveStatus;
 
 @Service
 public class StudentService {
+    private static final String WITHDRAWAL_HISTORY_NOTE = "Application withdrawn";
+
     private final UserRepository users;
     private final StudentProfileRepository profiles;
     private final JobRepository jobs;
@@ -136,10 +141,14 @@ public class StudentService {
     @Transactional
     public ApplicationResponse withdraw(String email, Long applicationId) {
         Application application = ownedApplication(email, applicationId);
-        if (application.getStatus() != Application.Status.APPLIED)
+        if (application.getStatus() != Application.Status.APPLIED || application.getWithdrawnAt() != null)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only APPLIED applications can be withdrawn");
-        application.setWithdrawnAt(Instant.now());
+        Instant withdrawnAt = Instant.now();
+        application.setWithdrawnAt(withdrawnAt);
         applications.save(application);
+        history.save(ApplicationStatusHistory.builder().application(application)
+                .status(Application.Status.APPLIED).changedBy(email).changedAt(withdrawnAt)
+                .note(WITHDRAWAL_HISTORY_NOTE).build());
         return toApplication(application, email);
     }
 
@@ -147,6 +156,28 @@ public class StudentService {
     public List<ApplicationResponse> applications(String email) {
         return applications.findByStudentId(user(email).getId()).stream()
                 .map(application -> toApplication(application, email)).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public StudentDashboardStats dashboardStats(String email) {
+        Long studentId = user(email).getId();
+        List<Object[]> offerCounts = offers.countByStatusForStudent(studentId);
+        List<ApplicationActivity> recentActivity = history
+                .findTop10ByApplicationStudentIdOrderByChangedAtDescIdDesc(studentId).stream()
+                .map(item -> new ApplicationActivity(item.getApplication().getJob().getTitle(),
+                        item.getApplication().getJob().getCompanyName(), item.getStatus().name(),
+                        item.getChangedAt(), item.getNote()))
+                .toList();
+        return new StudentDashboardStats(applications.countByStudentId(studentId),
+                DashboardStatsMapper.completeCounts(Application.Status.class,
+                        applications.countByStatusForStudent(studentId)),
+                interviews.countUpcomingByStudent(studentId,
+                        List.of(InterviewSchedule.Status.SCHEDULED, InterviewSchedule.Status.RESCHEDULED),
+                        Instant.now()),
+                offers.countByApplicationStudentId(studentId),
+                countOfferStatus(offerCounts, Offer.Status.ACCEPTED),
+                countOfferStatus(offerCounts, Offer.Status.DECLINED),
+                savedJobs.countByStudentId(studentId), recentActivity);
     }
 
     @Transactional(readOnly = true)
@@ -196,7 +227,8 @@ public class StudentService {
     @Transactional
     public OfferResponse respondToOffer(String email, Long offerId, OfferStatusRequest request) {
         Offer offer = offers.findByIdForUpdate(offerId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Offer not found"));
-        if (!offer.getApplication().getStudent().getEmail().equalsIgnoreCase(email))
+        User student = requireStudent(email);
+        if (!offer.getApplication().getStudent().getId().equals(student.getId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Offer belongs to another student");
         Offer.Status next;
         try { next = Offer.Status.valueOf(request.status().trim().toUpperCase()); }
@@ -204,15 +236,40 @@ public class StudentService {
         if (offer.getStatus() != Offer.Status.ISSUED || !Set.of(Offer.Status.ACCEPTED, Offer.Status.DECLINED).contains(next))
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Invalid offer status transition");
         offer.setStatus(next); offer.setUpdatedAt(Instant.now()); offers.save(offer);
+        Application application = offer.getApplication();
+        notifications.save(Notification.builder().user(student)
+                .title(next == Offer.Status.ACCEPTED ? "Offer accepted" : "Offer declined")
+                .message(application.getJob().getTitle() + " at " + application.getJob().getCompanyName()
+                        + ": offer " + next.name().toLowerCase(Locale.ROOT) + ".")
+                .type("OFFER_" + next.name()).readFlag(false).createdAt(Instant.now()).build());
         auditLogs.save(AuditLog.builder().actorEmail(email).action("OFFER_" + next.name())
                 .targetType("Offer").targetId(String.valueOf(offerId)).details("Application " + offer.getApplication().getId())
                 .createdAt(Instant.now()).build());
         return toOffer(offer);
     }
 
+    @Transactional(readOnly = true)
     public List<NotificationResponse> notifications(String email, int limit) {
-        return notifications.findByUserIdOrderByCreatedAtDesc(user(email).getId(), PageRequest.of(0, Math.min(limit, 100)))
+        User student = requireStudent(email);
+        return notifications.findByUserIdOrderByCreatedAtDescIdDesc(student.getId(), PageRequest.of(0, Math.min(limit, 100)))
                 .stream().map(this::toNotification).toList();
+    }
+
+    @Transactional
+    public NotificationResponse markNotificationRead(String email, Long notificationId) {
+        User student = requireStudent(email);
+        Notification notification = notifications.findById(notificationId).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Notification not found"));
+        if (!notification.getUser().getId().equals(student.getId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Notification belongs to another student");
+        notification.setReadFlag(true);
+        return toNotification(notifications.save(notification));
+    }
+
+    @Transactional
+    public void markAllNotificationsRead(String email) {
+        User student = requireStudent(email);
+        notifications.markAllReadByUserId(student.getId());
     }
 
     public Resume uploadResume(String email, MultipartFile file) throws Exception {
@@ -265,6 +322,12 @@ public class StudentService {
         return users.findByEmail(email.toLowerCase()).orElseThrow(
                 () -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
+    private User requireStudent(String email) {
+        User student = user(email);
+        if (student.getRole() != User.Role.STUDENT)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Student access required");
+        return student;
+    }
     private Job job(Long id) {
         return jobs.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Job not found"));
     }
@@ -293,9 +356,17 @@ public class StudentService {
                 profile.getLinkedinUrl(), profile.getGithubUrl(), profile.getPortfolioUrl(), profile.getResumeUrl());
     }
     private ApplicationResponse toApplication(Application application, String email) {
-        List<StatusHistoryResponse> historyRows = history.findByApplicationIdOrderByChangedAtAsc(application.getId())
-                .stream().map(row -> new StatusHistoryResponse(row.getStatus().name(), row.getChangedBy(),
-                        row.getChangedAt(), row.getNote())).toList();
+        List<StatusHistoryResponse> historyRows = history.findByApplicationIdOrderByChangedAtAscIdAsc(application.getId())
+                .stream().map(row -> {
+                    boolean withdrawn = application.getWithdrawnAt() != null
+                            && row.getStatus() == Application.Status.APPLIED
+                            && WITHDRAWAL_HISTORY_NOTE.equals(row.getNote());
+                    boolean rejected = row.getStatus() == Application.Status.REJECTED;
+                    return new StatusHistoryResponse(withdrawn ? "WITHDRAWN" : row.getStatus().name(),
+                            row.getChangedBy(), row.getChangedAt(),
+                            withdrawn ? null : row.getNote(),
+                            rejected ? row.getNote() : null);
+                }).toList();
         InterviewSchedule interview = application.getId() == null ? null : null;
         InterviewResponse interviewResponse = interviews.findByApplicationStudentId(application.getStudent().getId()).stream()
                 .filter(item -> item.getApplication().getId().equals(application.getId())).findFirst()
@@ -303,7 +374,7 @@ public class StudentService {
                         item.getLocationOrLink(), item.getNotes(), item.getFeedback())).orElse(null);
         return new ApplicationResponse(application.getId(), application.getJob().getId(), application.getJob().getTitle(),
                 application.getJob().getCompanyName(), application.getStatus().name(), application.getAppliedAt(),
-                application.getRecruiterFeedback(), historyRows, interviewResponse);
+                application.getRecruiterFeedback(), application.getWithdrawnAt(), historyRows, interviewResponse);
     }
     private NotificationResponse toNotification(Notification notification) {
         return new NotificationResponse(notification.getId(), notification.getTitle(), notification.getMessage(),
@@ -332,4 +403,9 @@ public class StudentService {
         return false;
     }
     private boolean blank(String value) { return value == null || value.isBlank(); }
+
+    private long countOfferStatus(List<Object[]> counts, Offer.Status status) {
+        return counts.stream().filter(row -> status.equals(row[0]))
+                .mapToLong(row -> ((Number) row[1]).longValue()).sum();
+    }
 }

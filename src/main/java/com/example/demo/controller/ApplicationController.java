@@ -50,8 +50,9 @@ public class ApplicationController {
 
     @PatchMapping("/{applicationId}/status")
     public ApplicantResponse updateStatus(@PathVariable Long applicationId,
-            @RequestParam Status status, Principal principal) {
+            @RequestParam Status status,
+            @RequestParam(required = false) String rejectionExplanation, Principal principal) {
         return recruiterService.updateStatus(principal.getName(), applicationId,
-                new StatusRequest(status.name(), null));
+                new StatusRequest(status.name(), null, rejectionExplanation));
     }
 }

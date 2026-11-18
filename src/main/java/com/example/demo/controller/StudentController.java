@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.demo.dto.student.StudentDtos.*;
+import com.example.demo.dto.DashboardStatsDtos.StudentDashboardStats;
 import com.example.demo.service.StudentService;
 
 import jakarta.validation.Valid;
@@ -25,6 +26,11 @@ public class StudentController {
     private final StudentService service;
 
     public StudentController(StudentService service) { this.service = service; }
+
+    @GetMapping("/stats")
+    public StudentDashboardStats stats(Principal principal) {
+        return service.dashboardStats(principal.getName());
+    }
 
     @GetMapping("/profile")
     public ProfileResponse profile(Principal principal) { return service.getProfile(principal.getName()); }
@@ -107,6 +113,17 @@ public class StudentController {
     public List<NotificationResponse> notifications(Principal principal,
                                                     @RequestParam(defaultValue = "20") int limit) {
         return service.notifications(principal.getName(), limit);
+    }
+
+    @PatchMapping("/notifications/{notificationId}/read")
+    public NotificationResponse markNotificationRead(Principal principal, @PathVariable Long notificationId) {
+        return service.markNotificationRead(principal.getName(), notificationId);
+    }
+
+    @PatchMapping("/notifications/read-all")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void markAllNotificationsRead(Principal principal) {
+        service.markAllNotificationsRead(principal.getName());
     }
 
     @PostMapping(value = "/resume", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

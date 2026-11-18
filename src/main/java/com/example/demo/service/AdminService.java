@@ -12,6 +12,7 @@ import com.example.demo.dto.admin.AdminDtos.*;
 import com.example.demo.entity.*;
 import com.example.demo.entity.User.Role;
 import com.example.demo.repository.*;
+import com.example.demo.entity.Application.Status;
 
 @Service
 public class AdminService {
@@ -22,14 +23,17 @@ public class AdminService {
     private final PlacementDriveRepository drives;
     private final PlacementSelectionRepository selections;
     private final AuditLogRepository auditLogs;
+    private final JobRepository jobs;
+    private final ApplicationRepository applications;
     private final RefreshTokenRepository refreshTokens;
 
     public AdminService(UserRepository users, CollegeRepository colleges, CompanyRepository companies,
             PlacementOfficerProfileRepository officers, PlacementDriveRepository drives,
-            PlacementSelectionRepository selections, AuditLogRepository auditLogs,
-            RefreshTokenRepository refreshTokens) {
+            PlacementSelectionRepository selections, AuditLogRepository auditLogs, JobRepository jobs,
+            ApplicationRepository applications, RefreshTokenRepository refreshTokens) {
         this.users = users; this.colleges = colleges; this.companies = companies;
         this.officers = officers; this.drives = drives; this.selections = selections; this.auditLogs = auditLogs;
+        this.jobs = jobs; this.applications = applications;
         this.refreshTokens = refreshTokens;
     }
 
@@ -101,13 +105,17 @@ public class AdminService {
         return CompanyResponse.from(companies.save(company));
     }
 
+    @Transactional(readOnly = true)
     public PlatformStats stats() {
-        List<User> allUsers = users.findAll();
-        long students = allUsers.stream().filter(user -> user.getRole() == Role.STUDENT).count();
-        long recruiters = allUsers.stream().filter(user -> user.getRole() == Role.RECRUITER).count();
-        long officers = allUsers.stream().filter(user -> user.getRole() == Role.PLACEMENT_OFFICER).count();
-        return new PlatformStats(allUsers.size(), students, recruiters, officers, colleges.count(), companies.count(), drives.count(),
-                selections.count());
+        long students = users.countByRole(Role.STUDENT);
+        long uniqueStudentsPlaced = selections.countDistinctStudentsPlacedPlatform();
+        return new PlatformStats(users.count(), students, users.countByRole(Role.RECRUITER),
+                users.countByRole(Role.PLACEMENT_OFFICER), colleges.count(), companies.count(), drives.count(),
+                selections.count(), jobs.countActiveNonInternshipJobs(java.time.LocalDate.now()),
+                jobs.countActiveInternships(java.time.LocalDate.now()), applications.count(),
+                DashboardStatsMapper.completeCounts(Status.class, applications.countByStatus()),
+                uniqueStudentsPlaced, DashboardStatsMapper.percentage(uniqueStudentsPlaced, students),
+                auditLogs.findTop10ByOrderByCreatedAtDesc().stream().map(AuditLogResponse::from).toList());
     }
 
     public List<AuditLogResponse> auditLogs() {

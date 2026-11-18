@@ -1,6 +1,8 @@
 package com.example.demo.dto.admin;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 import com.example.demo.entity.AuditLog;
 import com.example.demo.entity.College;
@@ -40,5 +42,8 @@ public final class AdminDtos {
     }
     public record VerificationRequest(boolean verified) {}
     public record PlatformStats(long users, long students, long recruiters, long placementOfficers,
-                                long colleges, long companies, long drives, long selections) {}
+                                long colleges, long companies, long drives, long selections,
+                                long activeJobs, long activeInternships, long totalApplications,
+                                Map<String, Long> applicationsByStatus, long uniqueStudentsPlaced,
+                                double placementPercentage, List<AuditLogResponse> recentActivity) {}
 }

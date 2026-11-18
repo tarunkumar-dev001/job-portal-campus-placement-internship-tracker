@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.example.demo.entity.Application;
+import com.example.demo.entity.ApplicationStatusHistory;
 import com.example.demo.entity.Application.Status;
 import com.example.demo.entity.Job;
 import com.example.demo.entity.StudentProfile;
@@ -17,6 +18,7 @@ import com.example.demo.entity.User;
 import com.example.demo.entity.User.Role;
 import com.example.demo.dto.LegacyApplicationResponse;
 import com.example.demo.repository.ApplicationRepository;
+import com.example.demo.repository.ApplicationStatusHistoryRepository;
 import com.example.demo.repository.JobRepository;
 import com.example.demo.repository.StudentProfileRepository;
 import com.example.demo.repository.UserRepository;
@@ -25,14 +27,17 @@ import com.example.demo.repository.UserRepository;
 public class ApplicationService {
 
     private final ApplicationRepository applicationRepository;
+    private final ApplicationStatusHistoryRepository historyRepository;
     private final UserRepository userRepository;
     private final StudentProfileRepository studentProfileRepository;
     private final JobRepository jobRepository;
 
     public ApplicationService(ApplicationRepository applicationRepository,
+            ApplicationStatusHistoryRepository historyRepository,
             UserRepository userRepository, StudentProfileRepository studentProfileRepository,
             JobRepository jobRepository) {
         this.applicationRepository = applicationRepository;
+        this.historyRepository = historyRepository;
         this.userRepository = userRepository;
         this.studentProfileRepository = studentProfileRepository;
         this.jobRepository = jobRepository;
@@ -73,7 +78,10 @@ public class ApplicationService {
                 .status(Status.APPLIED)
                 .appliedAt(Instant.now())
                 .build();
-        return LegacyApplicationResponse.from(applicationRepository.save(application));
+        Application saved = applicationRepository.save(application);
+        historyRepository.save(ApplicationStatusHistory.builder().application(saved).status(Status.APPLIED)
+                .changedBy(studentEmail).changedAt(Instant.now()).note("Application submitted").build());
+        return LegacyApplicationResponse.from(saved);
     }
 
     @Transactional(readOnly = true)

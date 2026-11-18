@@ -39,7 +39,8 @@ public final class RecruiterDtos {
                                           String mode, String locationOrLink, String notes, String feedback,
                                           String status) {}
     public record FeedbackRequest(@NotBlank String feedback) {}
-    public record StatusRequest(@NotNull String status, String note) {}
+    public record StatusRequest(@NotNull String status, @Size(max = 1000) String note,
+                                @Size(max = 1000) String rejectionExplanation) {}
     public record OfferRequest(String packageDetails, @DecimalMin("0.0") Double packageAmount,
                                @NotNull Instant joiningDate) {}
     public record OfferResponse(Long id, Long applicationId, String packageDetails, Double packageAmount,

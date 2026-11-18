@@ -11,6 +11,8 @@ import com.example.demo.entity.PlacementDrive;
 
 public interface PlacementDriveRepository extends JpaRepository<PlacementDrive, Long> {
     List<PlacementDrive> findByCollegeIdOrderByRegistrationDeadlineDesc(Long collegeId);
+    long countByCollegeId(Long collegeId);
+    long countByCollegeIdAndStatus(Long collegeId, PlacementDrive.DriveStatus status);
     List<PlacementDrive> findByStatusAndRegistrationDeadlineGreaterThanEqualOrderByRegistrationDeadlineAsc(
             PlacementDrive.DriveStatus status, java.time.LocalDate deadline);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
