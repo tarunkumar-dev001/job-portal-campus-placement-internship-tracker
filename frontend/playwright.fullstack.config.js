@@ -1,4 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
+import { configureFullstackApiTarget } from './e2e-fullstack/api-target.js';
+
+const fullstackApiBaseURL = configureFullstackApiTarget(process.env);
 
 export default defineConfig({
   testDir: './e2e-fullstack',
@@ -23,6 +26,9 @@ export default defineConfig({
       url: 'http://127.0.0.1:4174',
       reuseExistingServer: false,
       timeout: 30_000,
+      env: {
+        VITE_API_BASE_URL: fullstackApiBaseURL,
+      },
     },
   ],
 });
