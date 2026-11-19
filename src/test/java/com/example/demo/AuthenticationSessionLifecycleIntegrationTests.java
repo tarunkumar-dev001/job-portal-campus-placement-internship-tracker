@@ -30,6 +30,7 @@ import com.example.demo.dto.AuthFlowDtos.TokenResponse;
 import com.example.demo.dto.admin.AdminDtos.UserStatusRequest;
 import com.example.demo.dto.AuthResponse;
 import com.example.demo.dto.LoginRequest;
+import com.example.demo.entity.RefreshToken;
 import com.example.demo.entity.SecurityToken;
 import com.example.demo.entity.StudentProfile;
 import com.example.demo.entity.User;
@@ -44,6 +45,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -106,6 +112,7 @@ class AuthenticationSessionLifecycleIntegrationTests {
         User user = createStudent();
         AuthResponse sessionA = login(user);
         AuthResponse sessionB = login(user);
+        String sessionAId = jwtUtils.extractSessionId(sessionA.token());
         TokenResponse rotatedA = refreshSuccessfully(sessionA.refreshToken());
         TokenResponse rotatedAgainA = refreshSuccessfully(rotatedA.refreshToken());
         TokenResponse rotatedThirdA = refreshSuccessfully(rotatedAgainA.refreshToken());
@@ -120,6 +127,44 @@ class AuthenticationSessionLifecycleIntegrationTests {
                 () -> refresh(rotatedThirdA.refreshToken()).andExpect(status().isUnauthorized()),
                 () -> profile(sessionB.token()).andExpect(status().isOk()),
                 () -> refresh(sessionB.refreshToken()).andExpect(status().isOk()));
+
+        List<RefreshToken> sessionAFamily = refreshTokens.findAll().stream()
+                .filter(token -> sessionAId.equals(token.getSessionId()))
+                .toList();
+        assertFalse(sessionAFamily.isEmpty());
+        assertTrue(sessionAFamily.stream().allMatch(token -> token.getRevokedAt() != null));
+    }
+
+    @Test
+    void refreshRotationsPreserveSessionIdAndReplacementChain() throws Exception {
+        User user = createStudent();
+        AuthResponse issued = login(user);
+        String sessionId = jwtUtils.extractSessionId(issued.token());
+        assertNotNull(sessionId);
+
+        RefreshToken issuedRow = refreshToken(issued.refreshToken());
+        assertEquals(sessionId, issuedRow.getSessionId());
+        assertEquals(sessionId, jwtUtils.extractSessionId(issued.token()));
+
+        TokenResponse rotated = refreshSuccessfully(issued.refreshToken());
+        RefreshToken rotatedRow = refreshToken(rotated.refreshToken());
+        RefreshToken issuedRowAfterRotation = refreshToken(issued.refreshToken());
+        assertEquals(sessionId, rotatedRow.getSessionId());
+        assertEquals(sessionId, jwtUtils.extractSessionId(rotated.token()));
+        assertEquals(AuthSecurityService.hash(rotated.refreshToken()),
+                issuedRowAfterRotation.getReplacedByHash());
+        assertNotNull(issuedRowAfterRotation.getRevokedAt());
+
+        TokenResponse rotatedAgain = refreshSuccessfully(rotated.refreshToken());
+        RefreshToken rotatedAgainRow = refreshToken(rotatedAgain.refreshToken());
+        RefreshToken rotatedRowAfterRotation = refreshToken(rotated.refreshToken());
+        assertEquals(sessionId, rotatedAgainRow.getSessionId());
+        assertEquals(sessionId, jwtUtils.extractSessionId(rotatedAgain.token()));
+        assertEquals(AuthSecurityService.hash(rotatedAgain.refreshToken()),
+                rotatedRowAfterRotation.getReplacedByHash());
+        assertNotNull(rotatedRowAfterRotation.getRevokedAt());
+        assertNull(rotatedAgainRow.getReplacedByHash());
+        assertNull(rotatedAgainRow.getRevokedAt());
     }
 
     @Test
@@ -342,6 +387,10 @@ class AuthenticationSessionLifecycleIntegrationTests {
     private TokenResponse refreshSuccessfully(String refreshToken) throws Exception {
         MvcResult result = refresh(refreshToken).andExpect(status().isOk()).andReturn();
         return json.readValue(result.getResponse().getContentAsString(), TokenResponse.class);
+    }
+
+    private RefreshToken refreshToken(String rawToken) {
+        return refreshTokens.findByTokenHash(AuthSecurityService.hash(rawToken)).orElseThrow();
     }
 
     private org.springframework.test.web.servlet.ResultActions logout(String refreshToken) throws Exception {
