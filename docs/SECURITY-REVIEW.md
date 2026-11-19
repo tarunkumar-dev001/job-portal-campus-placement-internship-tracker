@@ -7,22 +7,40 @@ rotation, JWT session checks, logout, password-reset and account-disable flows,
 and related authentication and migration tests.
 
 No confirmed exploitable vulnerabilities were identified in the reviewed
-implementation. The following validation gaps and test issues remain.
+implementation. TiDB-specific compatibility tests and a prior live result are
+documented, but the result was not independently revalidated here and the
+account's provider-side instance scope and effective grants remain
+unverified. Production V6 readiness remains outstanding.
 
 ## Findings
 
-| # | Severity | Confidence | Finding |
-|---|---|---:|---|
-| 1 | Medium | 9/10 | Missing explicit protected-request tests for expired JWTs, missing `sid` claims, and legacy access JWTs without session identity. The lifecycle test expires a stored refresh token and checks its access token at `AuthenticationSessionLifecycleIntegrationTests.java:261-270`; the migration test checks legacy refresh-row revocation at `FlywayFreshDatabaseTest.java:40-71`, but neither directly tests those JWT cases. Add filter/API tests for each token form. |
-| 2 | Low | 10/10 | MySQL compatibility migration tests retain pre-V6 migration counts at `MySqlCompatibilityIntegrationTests.java:83,105,107`. With six migrations, the expected applied count and upgrade count are stale, so enabling these tests will fail before verifying V6. Update the counts and exercise migration of a schema containing existing refresh-token rows. |
-| 3 | Low | 8/10 | The migration has no TiDB-specific compatibility test. V6 uses MySQL-style `ALTER TABLE`, `UPDATE`, and `CREATE INDEX` statements at `V6__refresh_token_session_families.sql:1-7`; H2 MySQL mode coverage does not establish TiDB behavior. Validate against a disposable TiDB-compatible environment before production rollout. |
+| # | Severity | Status | Confidence | Finding |
+|---|---|---|---:|---|
+| 1 | Medium | Addressed | 9/10 | Added a protected-endpoint test for expired JWTs and one for pre-V6 sessionless JWTs. A missing-`sid` JWT and a pre-V6 JWT have the same claims and cannot be distinguished through the public endpoint; one test covers both in `AuthenticationSessionLifecycleIntegrationTests.java:282-310`. |
+| 2 | Low | Addressed | 10/10 | Updated the MySQL migration assertions to expect V6 and four migrations from V2 in `MySqlCompatibilityIntegrationTests.java`. The database-backed MySQL tests were not executed during the latest verification because the required disposable target configuration was not supplied. |
+| 3 | Low | Open | 8/10 | TiDB-specific compatibility tests exist and a prior run is documented as passing two integration tests, but that result was not independently revalidated for this review. The harness cannot prove provider-side instance scope or effective grants; H2 and the reported run do not establish production V6 readiness. Independently verify credentials/grants and rehearse against a disposable production-like baseline before rollout. |
 
 ## Review notes
 
 - The lifecycle and migration tests cover refresh concurrency, family replay,
   independent sessions, logout, password-reset revocation, disable/re-enable,
   and legacy refresh-row invalidation.
-- No production database was accessed and no migrations or tests were run as
-  part of this review.
-- Findings 1 and 3 are coverage/assurance gaps, not confirmed implementation
-  vulnerabilities. Finding 2 is a confirmed test expectation defect.
+- After deduplication, focused H2 lifecycle and migration tests passed (17
+  tests, 0 failures or errors). The last `mvnw clean verify`, run before that
+  test-only deduplication, passed (121 tests, 5 skipped). A later offline full
+  backend run passed 163 tests with 0 failures and 0 errors; 7 opt-in external
+  database tests were skipped (5 MySQL and 2 TiDB). All executed integration
+  tests used isolated H2 or in-memory test doubles. No external database was
+  accessed during that run.
+- The historical TiDB result is not evidence of production schema
+  compatibility or authorization to deploy. Finding 3 remains a release
+  assurance gap, not a confirmed implementation vulnerability.
+
+## Evidence provenance
+
+This evidence note was reviewed on 2026-11-19. The test results above are
+historical recorded results; the available Git history does not establish the
+exact revision on which each result was obtained, and the available records
+do not preserve exact commands for those runs. Treat them as historical
+evidence, not as verification of a specific current revision. Production V6
+readiness remains unestablished.

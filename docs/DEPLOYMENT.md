@@ -31,6 +31,36 @@ Create Mailjet API credentials and authorize the sender address in Mailjet. Set 
 
 Verification/reset tokens are generated from 256 bits of secure randomness, SHA-256 hashed in storage, expire, and are consumed under a database lock. Raw values are included only in their email link. Delivery errors roll back the token-issuing transaction where applicable and return a generic 503 without logging provider details or returning a token. Non-success HTTP responses, rejected Mailjet message statuses, and transport failures are treated as delivery failures. Production startup fails fast when either Mailjet credential, sender setting, or HTTPS frontend URL setting is absent.
 
+Authentication abuse limits use bounded, instance-local in-memory sliding windows: 10 login requests per normalized account per 15 minutes, 120 per socket peer per minute, and 5 verification/reset requests per normalized email per minute. The default 10,000-key budget is partitioned into hard, non-borrowable quotas: 6,000 account keys, 2,000 socket-peer IP keys, and 2,000 verification/reset email keys. Active keys are not evicted; if one category fills, new keys in that category receive the same generic HTTP 429 until entries expire, but that category cannot consume another category's reserved capacity. Keys are salted hashes, not raw email addresses or IPs. Expired entries are pruned periodically and when a category reaches capacity. State resets on restart and is not shared across instances; it is not distributed protection. Login IP attribution uses the servlet socket peer and ignores forwarded headers because this deployment has no explicit trusted-proxy configuration. Behind a reverse proxy, this may identify the proxy rather than the client; do not trust forwarding headers unless a trusted-proxy boundary is explicitly configured. Configure `app.security.rate-limit.*` properties to tune thresholds and capacity without changing API behavior.
+
+### Local demo profile and seed data
+
+The Maven `demo` profile and Spring `demo` profile are separate and both are required to run the demo application:
+
+- `-Pdemo` activates the Maven profile in `pom.xml`. It adds H2 with runtime scope; without this Maven profile, H2 is only a test dependency and is not available on the normal application runtime classpath.
+- `SPRING_PROFILES_ACTIVE=demo` activates Spring's demo configuration, including `application-demo.properties`, the datasource safety guard, and the demo seed runner. This does not activate Maven's profile.
+
+For a local seeded demo, first configure `APP_DEMO_SEED_ENABLED=true` and a private, demo-only `DEMO_PASSWORD` in the ignored local `.env` file or process environment. The `.env.example` default leaves seeding disabled. Do not put a real password in source control, and do not reuse any production credential.
+
+From the repository root in PowerShell, start the app with both profiles enabled:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = 'demo'
+$env:APP_DEMO_SEED_ENABLED = 'true'
+.\mvnw.cmd -Pdemo spring-boot:run
+```
+
+To build and run the executable JAR instead, activate the Maven profile for packaging as well. The Spring profile and seed settings must also be present when the JAR runs; run it from the repository root if it reads the local `.env` file:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = 'demo'
+$env:APP_DEMO_SEED_ENABLED = 'true'
+.\mvnw.cmd -Pdemo -DskipTests package
+java -jar .\target\demo-0.0.1-SNAPSHOT.jar
+```
+
+The demo guard permits seeding only with the approved in-memory H2 datasource and rejects combining the demo profile with `prod`. **Never activate the Spring `demo` profile, Maven `-Pdemo` profile, or demo seeding in production.** Demo records and credentials are synthetic and local-demo-only; they must never be copied into a production database.
+
 ### Frontend
 
 | Variable | Required | Purpose |
@@ -79,7 +109,7 @@ $env:JPA_DDL_AUTO = 'validate'
 .\mvnw.cmd spring-boot:run
 ```
 
-Flyway then applies migrations and Hibernate validates mappings. Stop the app and dispose of the container with `docker stop careerconnect-mysql-phase8`. For an upgrade test, restore a reviewed V5 backup into a second disposable schema first. Never substitute a production URL or credentials. Docker was unavailable during Phase 8; instead, the test suite ran against an independently initialized temporary MySQL 8.0.41 data directory, with two fresh schemas and a generated test-only credential. The installed MySQL80 service was not used. To rerun the opt-in suite, set `MYSQL_TEST_URL` to `jdbc:mysql://127.0.0.1:<ephemeral-port>/careerconnect_phase8_fresh?serverTimezone=UTC`, `MYSQL_TEST_UPGRADE_URL` to the matching `careerconnect_phase8_upgrade` URL, and `MYSQL_TEST_USERNAME`/`MYSQL_TEST_PASSWORD` to credentials created solely for that disposable server; then run `.\mvnw.cmd "-Dtest=MySqlCompatibilityIntegrationTests" test`. The test class rejects URLs not matching the loopback fresh-schema pattern. Never set these variables to an existing or production database.
+Flyway then applies migrations and Hibernate validates mappings. Stop the app and dispose of the container with `docker stop careerconnect-mysql-phase8`. Never substitute a production URL or credentials. Docker was unavailable during Phase 8; instead, the test suite ran against an independently initialized temporary MySQL 8.0.41 data directory, with two fresh schemas and a generated test-only credential. The installed MySQL80 service was not used. To rerun the opt-in suite, configure both URLs as `jdbc:mysql://127.0.0.1:<high-port>/careerconnect_phase8_fresh?serverTimezone=UTC` and `jdbc:mysql://127.0.0.1:<same-high-port>/careerconnect_phase8_upgrade?serverTimezone=UTC`, set `MYSQL_TEST_USERNAME` and `MYSQL_TEST_PASSWORD` to credentials created solely for that disposable server, and explicitly set `MYSQL_TEST_CONFIRM_DISPOSABLE=true`. The schemas must already exist and be empty. Before any Flyway operation the test validates both URLs, requires the two fixed database names on the same loopback port in the high-port range, rejects inherited Spring datasource/Flyway overrides, and performs read-only checks that both selected schemas contain no tables. Missing or unsafe configuration skips the test class; a connection or schema preflight failure aborts before migration. Loopback and an empty schema do not prove the server is disposable: use a temporary local MySQL data directory, never a tunnel or shared/production server, and independently verify the server and test-only grants. Run `.\mvnw.cmd "-Dtest=MySqlCompatibilityIntegrationTests" test` only after that verification.
 
 ## TLS truststore for TiDB Cloud
 
@@ -202,7 +232,7 @@ Do not proceed if any confirmation is missing. This runbook and the disposable T
 
 1. Review/backup the database and establish the Flyway version/checksum baseline.
 2. Create a least-privilege TiDB Cloud application user; download the CA and validate TLS in a disposable test.
-3. Configure the Render disk and backend secret/environment variables. Do not point the service at an existing database until the migration plan is approved.
+3. Configure the Render backend secret/environment variables. For resume persistence, configure a paid Render persistent disk or external storage; Render Free filesystem uploads are ephemeral and may be lost on restart, redeploy, or spin-down. Do not point the service at an existing database until the migration plan is approved.
 4. Apply migrations to a fresh/disposable database first, then review the upgrade path. On production, take a backup and run the reviewed forward migration during an approved maintenance window.
 5. Deploy the backend and verify `/api/health`, migration history, and application logs contain no secrets.
 6. Build/deploy Netlify with `VITE_API_BASE_URL`, set the exact CORS origin, and verify login/role workflows using synthetic test accounts.
@@ -212,7 +242,7 @@ Do not proceed if any confirmation is missing. This runbook and the disposable T
 - `GET https://<render-service>.onrender.com/api/health` returns `200` and `{"status":"UP"}`.
 - Browser network requests target the configured API origin; CORS allows only the intended Netlify origin.
 - Test login, refresh rotation, logout, disabled-account rejection, and one workflow for each role with synthetic accounts.
-- Verify resume upload/download ownership, persistent storage across a service restart, and TLS certificate verification.
+- Verify resume upload/download ownership and TLS certificate verification. Verify persistence across a service restart only when a paid Render persistent disk or external storage is configured; Render Free filesystem uploads are ephemeral.
 - Confirm Flyway schema history and inspect logs for credentials, JWTs, refresh/reset/verification tokens, and personal data.
 
 ## Not yet production-ready
