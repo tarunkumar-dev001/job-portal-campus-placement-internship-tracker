@@ -29,7 +29,7 @@ final class TidbCompatibilityTestConfig {
     static final String TRUSTSTORE_PASSWORD = "TIDB_COMPAT_TRUSTSTORE_PASSWORD";
     static final String FRESH_URL = "TIDB_COMPAT_FRESH_URL";
     static final String UPGRADE_URL = "TIDB_COMPAT_UPGRADE_URL";
-    static final String TEST_HOST = "gateway01.ap-southeast-1.prod.aws.tidbcloud.com";
+    static final String TEST_HOST = "gateway01.region.tidbcloud.example";
     static final int TEST_PORT = 4000;
 
     private static final String FRESH_SCHEMA = "careerconnect_tidb_compat_fresh";

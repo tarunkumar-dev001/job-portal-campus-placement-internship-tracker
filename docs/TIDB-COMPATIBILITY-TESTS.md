@@ -15,8 +15,8 @@ history.
 
 | Variable | Required value |
 |---|---|
-| `TIDB_COMPAT_FRESH_URL` | `jdbc:mysql://gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/careerconnect_tidb_compat_fresh?sslMode=VERIFY_IDENTITY` |
-| `TIDB_COMPAT_UPGRADE_URL` | `jdbc:mysql://gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/careerconnect_tidb_compat_upgrade?sslMode=VERIFY_IDENTITY` |
+| `TIDB_COMPAT_FRESH_URL` | `jdbc:mysql://gateway01.<region>.tidbcloud.example:4000/careerconnect_tidb_compat_fresh?sslMode=VERIFY_IDENTITY` |
+| `TIDB_COMPAT_UPGRADE_URL` | `jdbc:mysql://gateway01.<region>.tidbcloud.example:4000/careerconnect_tidb_compat_upgrade?sslMode=VERIFY_IDENTITY` |
 | `TIDB_COMPAT_USERNAME` | The complete instance-prefixed username created for `careerconnect-tidb-test`; do not strip or normalize its prefix |
 | `TIDB_COMPAT_PASSWORD` | Password for that test-instance account only |
 | `TIDB_COMPAT_TRUSTSTORE_PATH` | Path to the dedicated PKCS12 truststore described below |

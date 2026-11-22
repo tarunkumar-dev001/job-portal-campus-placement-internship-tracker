@@ -66,7 +66,7 @@ class DemoEnvironmentSafetyGuardTests {
     void rejectsMysqlAndTidbUrls() {
         for (String jdbcUrl : new String[] {
                 "jdbc:mysql://127.0.0.1/careerconnect",
-                "jdbc:mysql://gateway01.eu-central-1.prod.aws.tidbcloud.com/careerconnect",
+                "jdbc:mysql://gateway01.region.tidbcloud.example/careerconnect",
                 "jdbc:postgresql://127.0.0.1/careerconnect"
         }) {
             assertRejected(configuredEnvironment("demo", "true", jdbcUrl, H2_DRIVER));

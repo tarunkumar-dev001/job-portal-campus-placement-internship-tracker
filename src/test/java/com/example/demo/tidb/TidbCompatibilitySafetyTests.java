@@ -114,10 +114,10 @@ class TidbCompatibilitySafetyTests {
     void acceptsOnlyTheExactSharedHostnameAndPort() {
         for (String url : new String[] {
                 "jdbc:mysql://other.example.com:4000/careerconnect_tidb_compat_fresh?sslMode=VERIFY_IDENTITY",
-                "jdbc:mysql://gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4001/"
+                "jdbc:mysql://gateway01.region.tidbcloud.example:4001/"
                         + "careerconnect_tidb_compat_fresh?sslMode=VERIFY_IDENTITY",
                 "jdbc:mysql://75.2.106.174:4000/careerconnect_tidb_compat_fresh?sslMode=VERIFY_IDENTITY",
-                "jdbc:mysql://gateway01.ap-southeast-1.prod.aws.tidbcloud.com/"
+                "jdbc:mysql://gateway01.region.tidbcloud.example/"
                         + "careerconnect_tidb_compat_fresh?sslMode=VERIFY_IDENTITY"
         }) {
             Map<String, String> environment = validEnvironment();
@@ -127,7 +127,7 @@ class TidbCompatibilitySafetyTests {
 
         Map<String, String> environment = validEnvironment();
         environment.put(TidbCompatibilityTestConfig.UPGRADE_URL,
-                "jdbc:mysql://test.gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/"
+                "jdbc:mysql://test.gateway01.region.tidbcloud.example:4000/"
                         + "careerconnect_tidb_compat_upgrade?sslMode=VERIFY_IDENTITY");
         assertRejectsWithoutLeakingValues(environment);
     }

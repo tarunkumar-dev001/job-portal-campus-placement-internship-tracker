@@ -1103,7 +1103,7 @@ test('analytics grids adapt at mobile, tablet, and desktop widths', async ({ pag
 
 test('long account emails keep all dashboard headers and logout usable on mobile', async ({ page }) => {
   await mockApi(page, 'STUDENT');
-  const email = 'alexandra.srinivasan.longname@example-university.edu';
+  const email = 'alexandra.srinivasan.longname@example-university.invalid';
   const dashboards = [
     { role: 'STUDENT', path: '/student', heading: 'Student Workspace' },
     { role: 'RECRUITER', path: '/recruiter', heading: 'Recruiter Dashboard' },

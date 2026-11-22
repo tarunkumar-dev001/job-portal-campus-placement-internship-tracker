@@ -1,11 +1,20 @@
 # CareerConnect
 
-CareerConnect is a role-based job portal and campus placement tracker with a Spring Boot API and a React/Vite frontend.
+CareerConnect is a full-stack job portal and campus-placement tracker for students, recruiters, placement officers, and administrators. It supports job discovery and applications, interview and offer workflows, placement drives, notifications, dashboards, and email-based account verification.
 
-## Stack and roles
+## Technology stack
 
 - Java 21, Spring Boot 3.5.7, Spring Security, JWT, JPA/Hibernate, Flyway, MySQL
 - React 19, Vite, Tailwind CSS, React Router, Axios
+- Playwright for browser and full-stack end-to-end tests
+- MySQL/TiDB-compatible persistence and H2 for isolated test/demo environments
+
+## Role features
+
+- **Student:** Build a profile, search and save jobs or internships, apply to opportunities, track applications, schedule interviews, and review offers.
+- **Recruiter:** Publish jobs, review applicants, shortlist or reject applications, manage interviews, and issue offers.
+- **Placement officer:** Create placement drives, manage student registrations and selections, and monitor placement activity.
+- **Admin:** Manage platform users and companies and review audit activity.
 - Roles: `STUDENT`, `RECRUITER`, `PLACEMENT_OFFICER`, `ADMIN`
 
 ## Local development
@@ -19,6 +28,29 @@ CareerConnect is a role-based job portal and campus placement tracker with a Spr
 The application requires a configured database and secret; it intentionally has no default database password or JWT signing key. New accounts must verify their email before login or protected API access. Flyway owns schema changes and Hibernate validates mappings by default.
 
 Verification and password-reset links are sent through Mailjet's HTTPS API by the `prod` profile. Configure Mailjet API credentials, sender identity, and HTTPS frontend URLs as documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); production startup fails fast if any required setting is missing. Mail errors return a generic service-unavailable response and do not expose provider details or tokens. The `e2e` profile uses only its isolated synthetic mailbox.
+
+## Quick demo (local)
+
+The demo profile is opt-in, isolated to H2, and uses synthetic accounts. Set a demo-only password in the shell, then start the backend:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = 'demo'
+$env:APP_DEMO_SEED_ENABLED = 'true'
+$env:DEMO_PASSWORD = '<set-your-own-demo-password>'
+.\mvnw.cmd -Pdemo spring-boot:run
+```
+
+The demo password is not stored in the project; it must meet the application's configured length and is used for all seeded demo accounts.
+
+Demo account emails:
+
+- `admin@careerconnect-demo.test`
+- `officer1@careerconnect-demo.test`
+- `officer2@careerconnect-demo.test`
+- `recruiter1@careerconnect-demo.test` through `recruiter5@careerconnect-demo.test`
+- `student1@careerconnect-demo.test` through `student30@careerconnect-demo.test`
+
+The `demo` profile cannot run with `prod`. Production activation and demo seeding are rejected by the environment safety guards.
 
 ## Verification commands
 
@@ -44,3 +76,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the Render, Netlify, and TiDB C
 ## Current readiness
 
 Current Flyway files V1–V4 were modified during earlier development. Although source Git history is available, the deployed database's applied migration history and schema remain unknown, so its original checksums and compatibility cannot be established from the current worktree alone. Phase 8 verified fresh V1–V5 migration and a synthetic V2-to-V5 upgrade on disposable MySQL 8.0.41, but that cannot establish compatibility with an unknown deployed history. No database outside that disposable instance was accessed. Mailjet sender/API setup, instance-local rate limiting, and browser-local token storage remain operational/security considerations; no deployment was performed. **Production readiness is not established.** See [PROJECT_AUDIT.md](PROJECT_AUDIT.md) for evidence and owner actions.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
