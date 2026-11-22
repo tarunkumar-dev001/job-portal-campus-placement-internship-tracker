@@ -71,11 +71,13 @@ The fixture Playwright tests mock API responses. The separate full-stack suite s
 
 ## Deployment
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the Render, Netlify, and TiDB Cloud preparation and deployment sequence, including disposable local MySQL testing. Deployment and external-service changes have not been performed.
+The app is deployed with the backend on Render, the frontend on Netlify, and the database on TiDB Cloud. Live frontend: https://job-portal-campus-placement-internshi.netlify.app
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the Render, Netlify, and TiDB Cloud preparation and deployment sequence, including disposable local MySQL testing.
 
 ## Current readiness
 
-Current Flyway files V1–V4 were modified during earlier development. Although source Git history is available, the deployed database's applied migration history and schema remain unknown, so its original checksums and compatibility cannot be established from the current worktree alone. Phase 8 verified fresh V1–V5 migration and a synthetic V2-to-V5 upgrade on disposable MySQL 8.0.41, but that cannot establish compatibility with an unknown deployed history. No database outside that disposable instance was accessed. Mailjet sender/API setup, instance-local rate limiting, and browser-local token storage remain operational/security considerations; no deployment was performed. **Production readiness is not established.** See [PROJECT_AUDIT.md](PROJECT_AUDIT.md) for evidence and owner actions.
+The app is deployed on Render, Netlify, and TiDB Cloud. The live site starts with no sample data; demo accounts are available only by running the demo profile locally. Current Flyway files V1–V4 were modified during earlier development. Although source Git history is available, the deployed database's applied migration history and schema remain unknown, so its original checksums and compatibility cannot be established from the current worktree alone. Phase 8 verified fresh V1–V5 migration and a synthetic V2-to-V5 upgrade on disposable MySQL 8.0.41, but that cannot establish compatibility with an unknown deployed history. No database outside that disposable instance was accessed. Mailjet sender/API setup, instance-local rate limiting, and browser-local token storage remain operational/security considerations. **Production readiness is not established.** See [PROJECT_AUDIT.md](PROJECT_AUDIT.md) for evidence and owner actions.
 
 ## License
 
